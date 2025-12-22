@@ -338,7 +338,7 @@ class PiperJacobianIK:
         """
         수치 미분 기반 Jacobian 계산.
         """
-        delta = 1e-6
+        delta = 1e-4
         joint_values = joint_values.copy()
 
         J = np.zeros((6, 6), dtype=float)

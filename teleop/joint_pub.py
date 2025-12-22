@@ -31,19 +31,22 @@ class JointStateUdpPublisher(Node):
             return
 
         try:
-            q = np.fromstring(data.decode("utf-8"), sep=" ")
+            q = np.fromstring(data.decode("utf-8"), sep=" ").astype(float)
             if q.size < 6:
                 return
-            
-            arm = q[:6].astype(float)
-            gripper = [0.0, 0.0]  # joint7, joint8 기본값
+
+            arm = q[:6]
+            if q.size >= 8:
+                gripper = q[6:8]
+            else:
+                gripper = np.array([0.0, 0.0])  # fallback
         except Exception:
             return
 
         msg = JointState()
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.name = JOINT_NAMES
-        msg.position = list(arm) + gripper
+        msg.position = list(arm) + list(gripper)
         self.pub.publish(msg)
 
 def main():

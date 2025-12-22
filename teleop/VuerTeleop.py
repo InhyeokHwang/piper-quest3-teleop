@@ -73,10 +73,6 @@ class VuerTeleop:
         # raw VR 데이터를 가공 (y-up -> z-up, 등)
         head_mat, right_wrist_mat = self.processor.process(self.tv)
 
-        # 디버그 출력 (z-up, x-forward로 수정된 이후 값이라고 가정)
-        print("[VuerTeleop] raw right_wrist pos:", right_wrist_mat[:3, 3])
-        print("[VuerTeleop] raw right_wrist rotation:", right_wrist_mat[:3, :3])
-
         # 머리 회전 행렬 (3x3)
         head_rmat = head_mat[:3, :3]
 
@@ -87,6 +83,10 @@ class VuerTeleop:
 
         return head_rmat, right_pose
 
+    @property
+    def right_state(self) -> np.ndarray:
+        return self.tv.right_state
+    
     def close(self) -> None:
         shm = getattr(self, "shm", None)
         if shm is None:

@@ -18,6 +18,9 @@ from .mapping.vr_mapper import VRToRobotMapper, VRMapperConfig
 from .io.udp_sender import UDPSender, UDPSenderConfig
 from .io.camera import OpenCVCameraStreamer, CameraStreamerConfig
 
+from .controllers.gripper import GripperController, GripperConfig
+
+
 from . import config
 from typing import List
 
@@ -90,9 +93,34 @@ def main():
     else:
         print("[DRY RUN] No hardware commands will be sent.")
 
+    ## gripper
+    gripper_ctl = GripperController(GripperConfig(
+        # === control mode ===
+        mode="analog",              # 누르는 동안만 활성화
+        analog_source="trigger",    # "trigger" or "squeeze"
+
+        # === right_state index mapping ===
+        idx_a_button=4,             # A 버튼 (analog 모드에서는 사실상 미사용)
+        idx_trigger_value=6,        # triggerValue (0.0 ~ 1.0)
+        idx_squeeze_value=7,        # squeezeValue (0.0 ~ 1.0)
+
+        # === output scale (Piper gripper) ===
+        out_min=0,
+        out_max=1000,
+
+        # === behavior tuning ===
+        alpha=0.35,                 # smoothing (0~1)
+        deadzone_low=0.05,          # 미세 떨림 제거
+        deadzone_high=0.95,
+        close_when_high=True,       # trigger 많이 누를수록 닫힘
+    ))
+
+
     # Loop state
     last_q = q_zero.copy()
-    gripper_pos = 0  # TODO: VR 버튼으로 바꾸기
+    gripper_pos = 0
+
+    grip_print_cnt = 0
 
     try:
         while True:
@@ -100,6 +128,16 @@ def main():
 
             # get VR right pose
             _, right_pose = teleoperator.step()
+            
+            # gripper
+            gripper_pos = gripper_ctl.update(teleoperator)
+
+            # 0..1000 -> 0..1
+            t = gripper_pos / 1000.0
+            open_ratio = 1.0 - t   
+
+            joint7 =  0.035 * open_ratio
+            joint8 = -0.035 * open_ratio
 
             # build target EE pose
             target_T, _info = mapper.compute_target_T(right_pose)
@@ -123,14 +161,27 @@ def main():
 
             # UDP send (rad)
             if udp is not None:
-                udp.send_floats(q_sol.tolist())
+                q8 = q_sol.tolist() + [joint7, joint8]   # joint7, joint8은 그리퍼
+                udp.send_floats(q8)
 
             # send to robot
             joint_int = rad6_to_piper_int6(q_sol, config.RAD_TO_PIPER)
+            
+            # ######## prints (N frames)
+            # grip_print_cnt += 1
+            # if grip_print_cnt % 30 == 0:
+            #     rs = teleoperator.right_state
+            #     print(f"[GRIP] trig={rs[6]:.3f} squeeze={rs[7]:.3f} -> gripper_pos={gripper_pos}")
+
+            #     if args.print_freq:
+            #         dt = max(time.time() - loop_t0, 1e-9)
+            #         print("[Loop] freq:", 1.0 / dt)
+            # #########################
+
 
             if args.dry_run:
                 print(f"[DRY RUN] JointCtrl{tuple(joint_int)}")
-                print(f"[DRY RUN] GripperCtrl(abs({gripper_pos}), 1000, 0x01, 0)")
+                print(f"[DRY RUN] GripperCtrl(position={gripper_pos}, speed=1000, enable=1)")
             else:
                 driver.send_joints(joint_int)
                 driver.set_gripper(position=gripper_pos, speed=1000, enable=True)

@@ -24,13 +24,12 @@ class OpenTeleVision:
         self.img_height, self.img_width = img_shape[:2] ## 한 눈(left or right) 기준의 height/width 
 
         # ngrok은 로컬에서 돌아가는 서버를 인터넷 어디서나 접속할 수 있게 해주는 터널링 서비스
-        if ngrok: ## 참이면 ngrok이 제공하는 https로 열기 -> 인증서 없이 (vuer는 로봇공학에서 많이 쓰는 오픈 소스 시각화 도구임)
+        if ngrok: ## 참이면 ngrok이 제공하는 https로 열기 
             self.app = Vuer(host='0.0.0.0', queries=dict(grid=False), queue_len=3) ## queries dict(grid=False)는 Vuer 기본 UI 그리드 표시를 끄는 것. queue_len=3은 이벤트 큐 길이를 제한하는 것(지연 방지)
         else: ## 인증서 직접 사용
             self.app = Vuer(host='0.0.0.0', cert=cert_file, key=key_file, queries=dict(grid=False), queue_len=3)
         
         # 기존에는 손을 트래킹하는 방식이지만 나는 컨트롤러 트래킹으로 바꿀 것임
-        #self.app.add_handler("HAND_MOVE")(self.on_hand_move) ## 만약 Vuer 클라이언트에서 "HAND_MOVE"가 오면 on_hand_move 루틴 호출
         # 컨트롤러 이벤트 핸들러
         self.app.add_handler("CONTROLLER_MOVE")(self.on_controller_move)
 
@@ -42,14 +41,14 @@ class OpenTeleVision:
         else:
             raise ValueError("stream_mode must be 'image'")
 
-        # 손
-        self.left_hand_shared = Array('d', 16, lock=True) ## 4x4 (왼손)
-        self.right_hand_shared = Array('d', 16, lock=True) ## 4x4 (오른손)
-
-        # 컨트롤러
-        self.left_controller_shared = Array('d', 16, lock=True) ## 4x4 (왼손)
-        self.right_controller_shared = Array('d', 16, lock=True) ## 4x4 (오른손)
         
+        # 컨트롤러
+        self.right_controller_shared = Array('d', 16, lock=True) ## 4x4 (오른손)
+        # 0 trigger_pressed, 1 squeeze_pressed, 2 touchpad_pressed, 3 thumbstick_pressed, 4 a_pressed, 5 b_pressed,
+        # 6 triggerValue, 7 squeezeValue, 8 touchpadX, 9 touchpadY, 10 thumbX, 11 thumbY
+        self.right_state_shared = Array('d', 12, lock=True)
+        
+
         # 머리
         self.head_matrix_shared = Array('d', 16, lock=True) ## 4x4 (머리) 
         # 카메라 aspect
@@ -80,10 +79,23 @@ class OpenTeleVision:
             if isinstance(right, (list, tuple)) and len(right) == 16:
                 self.right_controller_shared[:] = right
 
-            # LEFT
-            left = data.get("left")
-            if isinstance(left, (list, tuple)) and len(left) == 16:
-                self.left_controller_shared[:] = left
+            # RIGHT state
+            rs = data.get("rightState") or {}
+            if isinstance(rs, dict):
+                self.right_state_shared[:] = [
+                    1.0 if rs.get("trigger", False) else 0.0,
+                    1.0 if rs.get("squeeze", False) else 0.0,
+                    1.0 if rs.get("touchpad", False) else 0.0,
+                    1.0 if rs.get("thumbstick", False) else 0.0,
+                    1.0 if rs.get("aButton", False) else 0.0,
+                    1.0 if rs.get("bButton", False) else 0.0,
+                    float(rs.get("triggerValue", 0.0) or 0.0),
+                    float(rs.get("squeezeValue", 0.0) or 0.0),
+                    float((rs.get("touchpadValue", [0.0, 0.0]) or [0.0, 0.0])[0]),
+                    float((rs.get("touchpadValue", [0.0, 0.0]) or [0.0, 0.0])[1]),
+                    float((rs.get("thumbstickValue", [0.0, 0.0]) or [0.0, 0.0])[0]),
+                    float((rs.get("thumbstickValue", [0.0, 0.0]) or [0.0, 0.0])[1]),
+                ]
 
         except Exception as e:
             print("[CONTROLLER_MOVE] error:", e)
@@ -141,12 +153,18 @@ class OpenTeleVision:
 
         
     @property
-    def left_controller(self):
-        return np.array(self.left_controller_shared[:]).reshape(4, 4, order="F")
-
-    @property
     def right_controller(self):
         return np.array(self.right_controller_shared[:]).reshape(4, 4, order="F")
+    
+    @property
+    def right_state(self) -> np.ndarray:
+        """
+        right_state shape: (12,)
+        index:
+          0 trigger, 1 squeeze, 2 touchpad, 3 thumbstick, 4 a, 5 b,
+          6 triggerValue, 7 squeezeValue, 8 touchX, 9 touchY, 10 thumbX, 11 thumbY
+        """
+        return np.array(self.right_state_shared[:], dtype=float)
 
     @property
     def head_matrix(self):
