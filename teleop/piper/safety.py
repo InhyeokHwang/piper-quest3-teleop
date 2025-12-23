@@ -40,7 +40,7 @@ def enable_and_wait(
         if also_open_gripper:
             # keep same behavior as your code
             try:
-                driver.set_gripper(position=0, speed=1000, enable=True)
+                driver.set_gripper(position=0, effort=2000, enable=True)
             except Exception as e:
                 # gripper might fail depending on state; don't crash here
                 print("[safety] Gripper open command failed:", e)

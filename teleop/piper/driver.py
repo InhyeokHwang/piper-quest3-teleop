@@ -76,17 +76,22 @@ class PiperDriver:
     def set_gripper(
         self,
         position: int,
-        speed: int = 1000,
+        effort: int = 2000,   # 0~5000
         enable: bool = True,
+        clear_error: bool = False,
     ):
-        """
-        position: int (absolute)
-        """
         if not self.connected:
             raise RuntimeError("Piper is not connected.")
 
-        enable_flag = 0x01 if enable else 0x00
-        self._piper.GripperCtrl(abs(position), speed, enable_flag, 0)
+        if clear_error:
+            code = 0x03 if enable else 0x02  # enable/disable + clear error
+        else:
+            code = 0x01 if enable else 0x00  # enable/disable
+
+        pos = abs(int(position))
+        eff = int(max(0, min(5000, effort)))
+
+        self._piper.GripperCtrl(pos, eff, code, 0x00)
 
     # =============================
     # State feedback

@@ -62,7 +62,7 @@ class VuerTeleop:
         self.processor = VuerPreprocessor()
 
 
-    def step(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def step(self) -> Tuple[np.ndarray, np.ndarray]:
         """
         returns:
           head_rmat: (3,3)

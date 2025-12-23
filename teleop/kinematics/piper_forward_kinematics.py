@@ -12,7 +12,6 @@ C++ PiperForwardKinematics (Agilex-College/piper_kinematics)를
 - compute_single_transform(i, joint_val): i번째 조인트에 대한 4x4 변환
 - get_dh_params(): DH 파라미터 테이블 리턴
 
-이 파일은 piper_jacobian_ik.PiperJacobianIK 와 함께 사용하기 위한 용도.
 """
 
 from __future__ import annotations
@@ -102,6 +101,22 @@ class PiperForwardKinematics:
             Ts.append(T.copy())
 
         return Ts
+        
+    def fk_all_joint_positions(self, joint_values: List[float] | np.ndarray) -> np.ndarray:
+        """
+        base 포함 각 조인트 프레임 원점들의 위치를 (N,3)으로 반환.
+
+        Returns
+        -------
+        joints_xyz : (7,3) np.ndarray
+            joints_xyz[0] = base (0,0,0)
+            joints_xyz[1] = joint1 frame origin
+            ...
+            joints_xyz[6] = joint6(=EE) frame origin
+        """
+        Ts = self.compute_fk_all(joint_values)          # List[7] of (4,4)
+        joints_xyz = np.stack([T[:3, 3] for T in Ts], axis=0)
+        return joints_xyz
 
     def compute_single_transform(self, joint_index: int, joint_value: float) -> np.ndarray:
         """

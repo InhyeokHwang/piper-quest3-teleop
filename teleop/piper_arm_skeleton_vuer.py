@@ -73,7 +73,8 @@ class VuerRobotSkeleton:
         joint_radius=0.015,
         link_radius=0.008,
         cylinder_local_axis=(0.0, 1.0, 0.0),
-        layers=3,   # bg(1,2) 위에 올리려면 3 이상 권장
+        layers=0,
+        offset=(0.0, 0.0, 0.0)
     ):
         self.edges = list(edges)
         self.key = key
@@ -81,9 +82,13 @@ class VuerRobotSkeleton:
         self.link_radius = float(link_radius)
         self.cyl_axis = np.array(cylinder_local_axis, dtype=float)
         self.layers = layers
+        self.offset = np.array(offset, dtype=float)
+
 
     def build_elements(self, joints_xyz):
         joints_xyz = np.asarray(joints_xyz, dtype=float)
+        joints_xyz = joints_xyz + self.offset
+        
         elems = []
 
         # joints
@@ -106,7 +111,7 @@ class VuerRobotSkeleton:
             elems.append(
                 Cylinder(
                     args=(self.link_radius, self.link_radius, float(L), 12, 1, False, 0.0, 6.28318),
-                    matrix=T.flatten(order="C").tolist(),  # 16개
+                    matrix=T.flatten(order="F").tolist(),
                     key=f"{self.key}:link:{i}-{j}",
                     layers=self.layers,
                 )

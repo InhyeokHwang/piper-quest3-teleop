@@ -7,6 +7,12 @@ from multiprocessing import Array, Value, Process, shared_memory
 import numpy as np
 import asyncio
 from pathlib import Path
+from .piper_arm_skeleton_vuer import VuerRobotSkeleton  
+from vuer.schemas import Sphere
+
+def robot_to_vuer_pos(p_r):
+    x, y, z = p_r
+    return np.array([x, z, -y], dtype=float)
 
 
 class OpenTeleVision:
@@ -48,6 +54,35 @@ class OpenTeleVision:
         # 6 triggerValue, 7 squeezeValue, 8 touchpadX, 9 touchpadY, 10 thumbX, 11 thumbY
         self.right_state_shared = Array('d', 12, lock=True)
         
+        # -------------------------
+        # Robot skeleton shared memory (joints xyz)
+        # -------------------------
+        self.max_joints = 8  # 넉넉히. piper면 보통 7~8이면 충분
+        self.robot_n_joints = Value('i', 0, lock=True)                 # 현재 유효 조인트 개수
+        self.robot_joints_shared = Array('d', 3 * self.max_joints, lock=True)  # xyz flat
+
+        # (예시) base->...->ee 연결. 너 FK 조인트 순서에 맞게 바꿔야 함
+        # N개 조인트면 edges는 [(0,1),(1,2)...]
+        self.robot_edges = []
+
+        self.skel = VuerRobotSkeleton(
+            edges=self.robot_edges,
+            key="robot-skel",
+            joint_radius=0.015,
+            link_radius=0.008,
+            offset=(0.0, 0.0, 0.0),  # 또는 offset 파라미터 제거
+            layers=0,                # (있다면) 레이어도 안전하게
+        )
+        ##########################################
+
+        # --- EE-anchor calibration state ---
+        self._world_offset = None  # np.array shape (3,) or None
+
+        # EE를 Vuer에서 어디에 놓을지 (원점에 두려면 [0,0,0])
+        self._anchor_in_vuer = np.array([0.0, 0.8, -1.5], dtype=float)
+
+        # joints_xyz에서 EE 인덱스 (보통 마지막이면 -1)
+        self._ee_index = -1
 
         # 머리
         self.head_matrix_shared = Array('d', 16, lock=True) ## 4x4 (머리) 
@@ -100,13 +135,48 @@ class OpenTeleVision:
         except Exception as e:
             print("[CONTROLLER_MOVE] error:", e)
 
+    def set_robot_joints(self, joints_xyz: np.ndarray):
+        arr_r = np.asarray(joints_xyz, dtype=float).reshape(-1, 3)
+
+        arr_v = np.stack([robot_to_vuer_pos(p) for p in arr_r], axis=0)
+
+        # ✅ 최초 1회: EE 기준으로 오프셋 캘리브레이션
+        if self._world_offset is None and arr_v.shape[0] >= 1:
+            ee0 = arr_v[self._ee_index].copy()
+            self._world_offset = self._anchor_in_vuer - ee0
+            print(f"[CALIB] ee0={ee0}, world_offset={self._world_offset}")
+
+        # ✅ 오프셋 적용
+        if self._world_offset is not None:
+            arr_v = arr_v + self._world_offset
+
+        # (선택) 추가로 y를 조금 올리고 싶으면:
+        # arr_v[:, 1] += 0.10
+
+        n = int(min(arr_v.shape[0], self.max_joints))
+        self.robot_edges = [(i, i + 1) for i in range(max(0, n - 1))]
+
+        with self.robot_n_joints.get_lock():
+            self.robot_n_joints.value = n
+
+        with self.robot_joints_shared.get_lock():
+            flat = self.robot_joints_shared
+            for k in range(3 * self.max_joints):
+                flat[k] = 0.0
+            for i in range(n):
+                base = 3 * i
+                flat[base + 0] = float(arr_v[i, 0])
+                flat[base + 1] = float(arr_v[i, 1])
+                flat[base + 2] = float(arr_v[i, 2])
+
 
     async def main_image(self, session, fps=60):
         # 그리드 끄기
         session.set @ DefaultScene(grid=False, frameloop="always")
+        
         # 컨트롤러
         session.upsert @ MotionControllers(stream=True, key="motion-controller", left=True, right=True,)
-        
+            
         while True:
             display_image = self.img_array
 
@@ -149,8 +219,28 @@ class OpenTeleVision:
             )],
             to="bgChildren",
             )
-            await asyncio.sleep(0.03)
 
+            # -------------------------
+            # Robot skeleton draw
+            # -------------------------
+            # n과 버퍼를 같은 락 구역에서 읽어서 레이스 제거
+            with self.robot_n_joints.get_lock(), self.robot_joints_shared.get_lock():
+                n = int(self.robot_n_joints.value)
+                if n >= 2:
+                    buf = np.array(self.robot_joints_shared[: 3 * n], dtype=float)
+                else:
+                    buf = None
+
+            if n >= 2 and buf is not None:
+                joints = buf.reshape(n, 3).copy()
+
+                # edges 동기화 (체인 형태)
+                self.skel.edges = [(i, i + 1) for i in range(n - 1)]
+
+                self.skel.upsert(session, joints)
+
+            await asyncio.sleep(0.03)
+            
         
     @property
     def right_controller(self):
