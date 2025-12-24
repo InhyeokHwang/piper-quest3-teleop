@@ -9,7 +9,7 @@ _TELEOP_DIR = Path(__file__).resolve().parent
 UDP_IP = "127.0.0.1"
 UDP_PORT = 15000
 
-START_POSITION = [0, 0, 0, 0, 0, 0, 0]
+START_POSITION = [0, 0, 0, 0, 0, 0, 0, 0]
 
 RAD_TO_PIPER = 57324.840764  # 1000*180/pi
 
@@ -22,27 +22,9 @@ MINK_LM_DAMPING = 1e-6
 MINK_POSTURE_COST = 1e-3
 #######MINK##############
 
-IK_CONFIG = dict(
-    max_iterations=100,
-    position_tolerance=5e-2,
-    orientation_tolerance=5e-2,
-    damping_factor=0.5,
-    use_analytical_jacobian=False,
+# === Gripper mapping ===
+GRIPPER_MAX_MM = 70.0          # 매뉴얼: 0~70mm
+GRIPPER_UNIT_MM = 0.001        # SDK: 0.001mm 단위
+GRIPPER_MAX_UM = int(GRIPPER_MAX_MM / GRIPPER_UNIT_MM)  # 70000
 
-    # --- nullspace posture bias ---
-    enable_nullspace=True,
-    q_rest = np.array([
-        0.004430889,
-        0.572840667,
-    -0.696521778,
-    -0.035883222,
-        0.705470778,
-    -0.007658111,
-    ], dtype=float),
-    nullspace_gain=0.08,
-    nullspace_weights=[1.0, 1.0, 1.5, 1.0, 2.0, 2.0],  # 손목쪽 더 강하게
-    sigma_min_threshold=0.02,
-    nullspace_max_step=0.05,
-)
-
-SLEEP = 0.01
+SIM_GRIPPER_RANGE = 0.035      # MuJoCo에서 joint7/8 벌리는 범위(너가 쓰던 값)

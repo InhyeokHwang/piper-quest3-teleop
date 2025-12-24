@@ -30,7 +30,8 @@ class GripperConfig:
       - "toggle_then_analog": A toggles enable_analog, then trigger controls (optional)
     """
     # output scale (robot API units)
-    out_min: int = 0
+    # value in [out_min, out_max] (typically 0..1000 for Piper)
+    out_min: int = 0 
     out_max: int = 1000
 
     # mapping direction
@@ -38,9 +39,9 @@ class GripperConfig:
     # If False: inverted
     close_when_high: bool = True
 
-    # deadzone in vg (0..1)
-    deadzone_low: float = 0.05
-    deadzone_high: float = 0.95
+    # deadzone in vg (0..1) -> deadzone은 아날로그 입력에서 너무 작은 변화는 무시해버리는 것
+    deadzone_low: float = 0.05 # vg < 0.05면 0.0으로 강제
+    deadzone_high: float = 0.95 # vg > 0.95면 1.0으로 강제
 
     # smoothing
     # alpha=1.0 => no smoothing, immediate
@@ -99,7 +100,7 @@ class GripperController:
         """
         Update internal state from teleoperator and return gripper position in robot units.
         """
-        vg = self._read_vg(teleoperator)  # 0..1
+        vg = self._read_vg(teleoperator)  # 0..1 vg는 virtual gripper value의 약자
         vg = self._post_process(vg)       # deadzone + clamp + smoothing
         return self._vg_to_output(vg)
 
