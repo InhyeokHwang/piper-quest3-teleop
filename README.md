@@ -1,3 +1,6 @@
+## Demo
+![Demo GIF](assets/demo.gif)
+
 ## Acknowledgement
 
 This project is currently being conducted under the supervision of **Dr. Hwa-Seop Lim** at the **AI Research Division, Korea Institute of Science and Technology (KIST)**.
