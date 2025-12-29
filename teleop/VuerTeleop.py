@@ -65,23 +65,17 @@ class VuerTeleop:
     def step(self) -> Tuple[np.ndarray, np.ndarray]:
         """
         returns:
-          head_rmat: (3,3)
-          left_pose: (7,)  [x,y,z,qx,qy,qz,qw]  (quat is xyzw)
           right_pose:(7,)  [x,y,z,qx,qy,qz,qw]  (quat is xyzw)
         """
-
         # raw VR 데이터를 가공 (y-up -> z-up, 등)
-        head_mat, right_wrist_mat = self.processor.process(self.tv)
-
-        # 머리 회전 행렬 (3x3)
-        head_rmat = head_mat[:3, :3]
+        right_wrist_mat = self.processor.process(self.tv)
 
         # 오른손 pose [x, y, z, qx, qy, qz, qw]
         right_quat_wxyz = rotations.quaternion_from_matrix(right_wrist_mat[:3, :3])
         right_quat_xyzw = right_quat_wxyz[[1, 2, 3, 0]]
         right_pose = np.concatenate([right_wrist_mat[:3, 3], right_quat_xyzw])
 
-        return head_rmat, right_pose
+        return right_pose
 
     @property
     def right_state(self) -> np.ndarray:

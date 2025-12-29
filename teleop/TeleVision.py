@@ -50,9 +50,7 @@ class OpenTeleVision:
         
         # 컨트롤러
         self.right_controller_shared = Array('d', 16, lock=True) ## 4x4 (오른손)
-        # 0 trigger_pressed, 1 squeeze_pressed, 2 touchpad_pressed, 3 thumbstick_pressed, 4 a_pressed, 5 b_pressed,
-        # 6 triggerValue, 7 squeezeValue, 8 touchpadX, 9 touchpadY, 10 thumbX, 11 thumbY
-        self.right_state_shared = Array('d', 12, lock=True)
+        self.right_state_shared = Array('d', 14, lock=True)
         
         # -------------------------
         # Robot skeleton shared memory (joints xyz)
@@ -97,41 +95,40 @@ class OpenTeleVision:
     def run(self):
         self.app.run()
 
-    ## vr에서 손이 움직일 때 호출됨 (안씀)
-    async def on_hand_move(self, event, session, fps=60):
-        try:
-            self.left_hand_shared[:] = event.value["leftHand"] 
-            self.right_hand_shared[:] = event.value["rightHand"]
-        except: 
-            pass
-
     ## 컨트롤러를 트래킹 
     async def on_controller_move(self, event, session, fps=60):
         data = event.value
         try:
             # RIGHT
-            right = data.get("right")
+            right = data.get("right") # 길이 16짜리
             if isinstance(right, (list, tuple)) and len(right) == 16:
                 self.right_controller_shared[:] = right
 
             # RIGHT state
             rs = data.get("rightState") or {}
+            # right_state_shared 
             if isinstance(rs, dict):
-                self.right_state_shared[:] = [
-                    1.0 if rs.get("trigger", False) else 0.0,
-                    1.0 if rs.get("squeeze", False) else 0.0,
-                    1.0 if rs.get("touchpad", False) else 0.0,
-                    1.0 if rs.get("thumbstick", False) else 0.0,
-                    1.0 if rs.get("aButton", False) else 0.0,
-                    1.0 if rs.get("bButton", False) else 0.0,
-                    float(rs.get("triggerValue", 0.0) or 0.0),
-                    float(rs.get("squeezeValue", 0.0) or 0.0),
-                    float((rs.get("touchpadValue", [0.0, 0.0]) or [0.0, 0.0])[0]),
-                    float((rs.get("touchpadValue", [0.0, 0.0]) or [0.0, 0.0])[1]),
-                    float((rs.get("thumbstickValue", [0.0, 0.0]) or [0.0, 0.0])[0]),
-                    float((rs.get("thumbstickValue", [0.0, 0.0]) or [0.0, 0.0])[1]),
-                ]
+                tp = rs.get("touchpadValue") or [0.0, 0.0]
+                ts = rs.get("thumbstickValue") or [0.0, 0.0]
 
+                self.right_state_shared[:] = [
+                    1.0 if rs.get("trigger", False) else 0.0,        # 0 얘가 그리퍼
+                    1.0 if rs.get("squeeze", False) else 0.0,        # 1 얘는 동작 여부
+                    1.0 if rs.get("touchpad", False) else 0.0,       # 2
+                    1.0 if rs.get("thumbstick", False) else 0.0,     # 3
+                    1.0 if rs.get("aButton", False) else 0.0,        # 4
+                    1.0 if rs.get("bButton", False) else 0.0,        # 5
+
+                    float(rs.get("triggerValue", 0.0) or 0.0),       # 6
+                    float(rs.get("squeezeValue", 0.0) or 0.0),       # 7
+                    float(tp[0] if len(tp) > 0 else 0.0),            # 8
+                    float(tp[1] if len(tp) > 1 else 0.0),            # 9
+                    float(ts[0] if len(ts) > 0 else 0.0),            # 10
+                    float(ts[1] if len(ts) > 1 else 0.0),            # 11
+
+                    1.0 if rs.get("aButtonValue", False) else 0.0,   # 12  (문서상 boolean)
+                    1.0 if rs.get("bButtonValue", False) else 0.0,   # 13
+                ]
         except Exception as e:
             print("[CONTROLLER_MOVE] error:", e)
 
@@ -140,13 +137,13 @@ class OpenTeleVision:
 
         arr_v = np.stack([robot_to_vuer_pos(p) for p in arr_r], axis=0)
 
-        # ✅ 최초 1회: EE 기준으로 오프셋 캘리브레이션
+        # 최초 1회: EE 기준으로 오프셋 캘리브레이션
         if self._world_offset is None and arr_v.shape[0] >= 1:
             ee0 = arr_v[self._ee_index].copy()
             self._world_offset = self._anchor_in_vuer - ee0
             print(f"[CALIB] ee0={ee0}, world_offset={self._world_offset}")
 
-        # ✅ 오프셋 적용
+        # 오프셋 적용
         if self._world_offset is not None:
             arr_v = arr_v + self._world_offset
 
@@ -249,10 +246,7 @@ class OpenTeleVision:
     @property
     def right_state(self) -> np.ndarray:
         """
-        right_state shape: (12,)
-        index:
-          0 trigger, 1 squeeze, 2 touchpad, 3 thumbstick, 4 a, 5 b,
-          6 triggerValue, 7 squeezeValue, 8 touchX, 9 touchY, 10 thumbX, 11 thumbY
+        right_state shape: (14,)
         """
         return np.array(self.right_state_shared[:], dtype=float)
 

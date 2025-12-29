@@ -72,7 +72,54 @@ class VRToRobotMapper:
         self.prev_q_target_wxyz = None
 
     def _is_vr_pos_valid(self, vr_pos: np.ndarray) -> bool:
+        # vr_pos = [x, y, z]라고 하면 norm = sqrt(x^2 + y^2 + z^2)
+        # 즉 원점으로부터 직선거리가 threshold보다 커지면 valid한 input으로 판단
+        # (vr_pos가 스트리밍 초기에 [0, 0, 0]으로 들어오기 때문)
         return np.linalg.norm(vr_pos) >= self.cfg.zero_pos_threshold
+    
+    def _normalize_vr_quat(self, quat_xyzw: np.ndarray) -> Optional[np.ndarray]:
+        qx, qy, qz, qw = quat_xyzw
+        q = np.array([qw, qx, qy, qz], dtype=float)  # wxyz 형태로 만듦
+
+        n = np.linalg.norm(q) # sqrt(qw^2 + qx^2 + qy^2 + qz^2)
+        if n < self.cfg.quat_norm_eps: # 아직 값이 안 들어온 상태
+            return None
+        return q / n
+    
+    def set_neutral_from_pose7(self, right_pose: np.ndarray) -> None:
+        """
+        Force-update VR neutral baselines (position + orientation) from a pose7 input.
+        right_pose: [x,y,z,qx,qy,qz,qw] (xyzw)
+        """
+        pose = np.asarray(right_pose, dtype=float).reshape(-1)
+        if pose.size != 7:
+            raise ValueError(f"right_pose must be 7 elements (xyzw), got {pose.size}")
+
+        vr_pos = pose[:3].copy()
+        vr_quat_xyzw = pose[3:].copy()
+
+        # only update if valid (avoid zero frame)
+        if not self._is_vr_pos_valid(vr_pos):
+            return
+
+        q_vr_wxyz = self._normalize_vr_quat(vr_quat_xyzw)
+        if q_vr_wxyz is None:
+            return
+
+        R_vr = rotations.matrix_from_quaternion(q_vr_wxyz)
+
+        # set new neutral baselines
+        self.vr_neutral_pos = vr_pos
+        self.R_vr0 = R_vr
+        self.prev_q_target_wxyz = None  # reset sign stabilization history
+        if self.debug:
+            print("[VRMapper] Neutral reset from squeeze press.")
+
+    def clear_neutral(self) -> None:
+        """Next valid frame will re-initialize neutral baselines."""
+        self.vr_neutral_pos = None
+        self.R_vr0 = None
+        self.prev_q_target_wxyz = None
 
     def compute_target_T(
         self,
@@ -82,7 +129,6 @@ class VRToRobotMapper:
         Returns (target_T, info).
 
         - target_T is None when calibration is not ready or input is invalid.
-        - info contains debug fields useful for logging/plotting.
         """
         pose = np.asarray(right_pose, dtype=float).reshape(-1)
         if pose.size != 7:
@@ -91,57 +137,39 @@ class VRToRobotMapper:
         vr_pos = pose[:3].copy()
         vr_quat_xyzw = pose[3:].copy()
 
-        info: Dict[str, Any] = {
-            "vr_pos": vr_pos,
-            "vr_quat_xyzw": vr_quat_xyzw,
-            "vr_neutral_pos": None,
-            "rel_pos": None,
-            "mapped_pos": None,
-            "calibrated": False,
-            "R_vr0_set": self.R_vr0 is not None,
-        }
-
-        # 1) validity check (Quest not yet streaming etc.)
+        # validity check (Quest not yet streaming etc.)
         if not self._is_vr_pos_valid(vr_pos):
             if self.debug:
                 print("[VRMapper] vr_pos ~ 0, ignoring frame.")
-            return None, info
+            return None
 
-        # 2) set neutral position once
+        # set neutral position once
         if self.vr_neutral_pos is None:
             self.vr_neutral_pos = vr_pos.copy()
             if self.debug:
                 print("[VRMapper] Set vr_neutral_pos:", self.vr_neutral_pos)
 
-        info["vr_neutral_pos"] = self.vr_neutral_pos
-
-        # 3) position mapping: rel motion + EE_START
+        ##### position mapping: rel motion + EE_START
         rel_pos = vr_pos - self.vr_neutral_pos
-        mapped_pos = self.cfg.position_scale * rel_pos + self.ee_start_pos
-        info["rel_pos"] = rel_pos
-        info["mapped_pos"] = mapped_pos
+        mapped_pos = self.cfg.position_scale * rel_pos + self.ee_start_pos ## EE 시작 위치 + 컨트롤러 rel pos * scale 한 xyz
 
-        # 4) orientation mapping
-        qx, qy, qz, qw = vr_quat_xyzw
-        q_vr_wxyz = np.array([qw, qx, qy, qz], dtype=float)
+        ##### orientation mapping
+        q_vr_wxyz = self._normalize_vr_quat(vr_quat_xyzw)
 
-        n = np.linalg.norm(q_vr_wxyz)
-        if n < self.cfg.quat_norm_eps:
+        if q_vr_wxyz is None:
             if self.debug:
                 print("[VRMapper] VR quaternion near zero, ignoring frame.")
-            return None, info
-        q_vr_wxyz /= n
-
+            return None
+        
         R_vr = rotations.matrix_from_quaternion(q_vr_wxyz)
 
         # 4-1) calibration: store R_vr0 once
         if self.R_vr0 is None:
             self.R_vr0 = R_vr.copy()
-            info["calibrated"] = False
             if self.debug:
                 print("[VRMapper] Calibrated orientation baseline R_vr0 set.")
             # 첫 프레임은 기준 잡는 용도라 target을 안 내보내는 게 안전
-            return None, info
+            return None
 
         # 4-2) compute delta rotation in VR frame
         dR_vr = self.R_vr0.T @ R_vr
@@ -167,8 +195,6 @@ class VRToRobotMapper:
         mapped_pose7 = np.concatenate([mapped_pos, mapped_quat_xyzw])
         target_T = pose7_to_matrix(mapped_pose7)
 
-        info["calibrated"] = True
-
         if self.debug:
             print("=== [VRMapper] VR -> Robot Target ===")
             print(" vr_pos:", vr_pos)
@@ -178,4 +204,4 @@ class VRToRobotMapper:
             print(" mapped_pos:", mapped_pos)
             print("====================================")
 
-        return target_T, info
+        return target_T

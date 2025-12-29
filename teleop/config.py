@@ -27,4 +27,4 @@ GRIPPER_MAX_MM = 70.0          # 매뉴얼: 0~70mm
 GRIPPER_UNIT_MM = 0.001        # SDK: 0.001mm 단위
 GRIPPER_MAX_UM = int(GRIPPER_MAX_MM / GRIPPER_UNIT_MM)  # 70000
 
-SIM_GRIPPER_RANGE = 0.035      # MuJoCo에서 joint7/8 벌리는 범위(너가 쓰던 값)
+SIM_GRIPPER_RANGE = 0.035      # MuJoCo에서 joint7/8 벌리는 범위

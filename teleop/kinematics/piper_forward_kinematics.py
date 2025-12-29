@@ -43,7 +43,7 @@ class PiperForwardKinematics:
         self._setup_dh_parameters()
 
     # ------------------------------------------------------------------
-    # Public API (IK 쪽에서 사용할 것들)
+    # FK 계산
     # ------------------------------------------------------------------
     def compute_fk(self, joint_values: List[float] | np.ndarray) -> np.ndarray:
         """
