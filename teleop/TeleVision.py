@@ -29,13 +29,12 @@ class OpenTeleVision:
         self.img_shape = (img_shape[0], 2*img_shape[1], 3) ## 한 눈(left or right) 기준의 해상도로 들어옴
         self.img_height, self.img_width = img_shape[:2] ## 한 눈(left or right) 기준의 height/width 
 
-        # ngrok은 로컬에서 돌아가는 서버를 인터넷 어디서나 접속할 수 있게 해주는 터널링 서비스
+        # ngrok - 로컬에서 돌아가는 서버를 인터넷 어디서나 접속할 수 있게 해주는 터널링 서비스
         if ngrok: ## 참이면 ngrok이 제공하는 https로 열기 
             self.app = Vuer(host='0.0.0.0', queries=dict(grid=False), queue_len=3) ## queries dict(grid=False)는 Vuer 기본 UI 그리드 표시를 끄는 것. queue_len=3은 이벤트 큐 길이를 제한하는 것(지연 방지)
         else: ## 인증서 직접 사용
             self.app = Vuer(host='0.0.0.0', cert=cert_file, key=key_file, queries=dict(grid=False), queue_len=3)
         
-        # 기존에는 손을 트래킹하는 방식이지만 나는 컨트롤러 트래킹으로 바꿀 것임
         # 컨트롤러 이벤트 핸들러
         self.app.add_handler("CONTROLLER_MOVE")(self.on_controller_move)
 
@@ -71,6 +70,12 @@ class OpenTeleVision:
             offset=(0.0, 0.0, 0.0),  # 또는 offset 파라미터 제거
             layers=0,                # (있다면) 레이어도 안전하게
         )
+
+        self._R_yaw = np.array([
+            [0.0, 0.0, 1.0],
+            [0.0, 1.0, 0.0],
+            [-1.0, 0.0, 0.0],
+        ], dtype=float)  # yaw +90
         ##########################################
 
         # --- EE-anchor calibration state ---
@@ -82,8 +87,6 @@ class OpenTeleVision:
         # joints_xyz에서 EE 인덱스 (보통 마지막이면 -1)
         self._ee_index = -1
 
-        # 머리
-        self.head_matrix_shared = Array('d', 16, lock=True) ## 4x4 (머리) 
         # 카메라 aspect
         self.aspect_shared = Value('d', 1.0, lock=True) ## 1x1 (카메라 aspect)
 
@@ -132,12 +135,29 @@ class OpenTeleVision:
         except Exception as e:
             print("[CONTROLLER_MOVE] error:", e)
 
+
+    def enable_skeleton(self, anchor_pos_vuer: np.ndarray):
+        self._anchor_in_vuer = np.asarray(anchor_pos_vuer, dtype=float).reshape(3,)
+        self._world_offset = None  
+
+    def clear_robot_joints(self):
+        with self.robot_n_joints.get_lock():
+            self.robot_n_joints.value = 0
+        with self.robot_joints_shared.get_lock():
+            for k in range(3 * self.max_joints):
+                self.robot_joints_shared[k] = 0.0
+
     def set_robot_joints(self, joints_xyz: np.ndarray):
         arr_r = np.asarray(joints_xyz, dtype=float).reshape(-1, 3)
 
+        # robot -> vuer
         arr_v = np.stack([robot_to_vuer_pos(p) for p in arr_r], axis=0)
 
-        # 최초 1회: EE 기준으로 오프셋 캘리브레이션
+        # yaw 프레임 통일: 먼저 회전 적용
+        if getattr(self, "_R_yaw", None) is not None:
+            arr_v = (self._R_yaw @ arr_v.T).T
+
+        # 최초 1회: EE 기준 오프셋 캘리브레이션 (yaw 적용된 ee0로)
         if self._world_offset is None and arr_v.shape[0] >= 1:
             ee0 = arr_v[self._ee_index].copy()
             self._world_offset = self._anchor_in_vuer - ee0
@@ -146,9 +166,6 @@ class OpenTeleVision:
         # 오프셋 적용
         if self._world_offset is not None:
             arr_v = arr_v + self._world_offset
-
-        # (선택) 추가로 y를 조금 올리고 싶으면:
-        # arr_v[:, 1] += 0.10
 
         n = int(min(arr_v.shape[0], self.max_joints))
         self.robot_edges = [(i, i + 1) for i in range(max(0, n - 1))]
@@ -217,10 +234,7 @@ class OpenTeleVision:
             to="bgChildren",
             )
 
-            # -------------------------
-            # Robot skeleton draw
-            # -------------------------
-            # n과 버퍼를 같은 락 구역에서 읽어서 레이스 제거
+            # 로봇 스켈레톤 그리기
             with self.robot_n_joints.get_lock(), self.robot_joints_shared.get_lock():
                 n = int(self.robot_n_joints.value)
                 if n >= 2:
@@ -235,6 +249,8 @@ class OpenTeleVision:
                 self.skel.edges = [(i, i + 1) for i in range(n - 1)]
 
                 self.skel.upsert(session, joints)
+            # else:
+            #     self.skel.clear(session)
 
             await asyncio.sleep(0.03)
             
@@ -249,12 +265,6 @@ class OpenTeleVision:
         right_state shape: (14,)
         """
         return np.array(self.right_state_shared[:], dtype=float)
-
-    @property
-    def head_matrix(self):
-        # with self.head_matrix_shared.get_lock():
-        #     return np.array(self.head_matrix_shared[:]).reshape(4, 4, order="F")
-        return np.array(self.head_matrix_shared[:]).reshape(4, 4, order="F")
 
     @property
     def aspect(self):

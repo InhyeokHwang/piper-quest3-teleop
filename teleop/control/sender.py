@@ -2,7 +2,7 @@
 import time
 from ..utils.conversions import rad6_to_piper_int6
 
-def maybe_send(driver, dry_run: bool, last_q, grip_um: int, next_send: float, send_period: float, rad_to_piper: float):
+def piper_send(driver, dry_run: bool, last_q, grip_um: int, next_send: float, send_period: float, rad_to_piper: float):
     now = time.monotonic()
     if now < next_send:
         return next_send

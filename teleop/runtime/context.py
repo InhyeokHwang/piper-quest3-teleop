@@ -22,7 +22,8 @@ class RuntimeContext:
     viewer: Optional[object]
 
     gripper_ctl: object
-    squeeze_ctl: object          # (추가한 거면 여기도 default 없이)
+    squeeze_ctl: object
+    ret_zero_ctl: object
 
     # loop state (default 없는 것들은 여기서 끝까지 계속)
     last_q: np.ndarray

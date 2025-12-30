@@ -23,8 +23,8 @@ class SqueezeOutput:
     holding: bool
     just_pressed: bool
     just_released: bool
-    go_to_zero: bool
-    target_T: Optional[object]  # (4,4) numpy array if provided
+    go_to_zero: bool = False
+    target_T: Optional[object] = None
 
 
 class SqueezeReferenceController:
@@ -37,6 +37,7 @@ class SqueezeReferenceController:
         self._neutral_target_T = None
         self._ref_controller_T = None
 
+    @staticmethod
     def _to_T44(x):
         """
         Convert controller pose to (4,4) np.ndarray.
@@ -66,14 +67,7 @@ class SqueezeReferenceController:
         self._neutral_target_T = None
         self._ref_controller_T = None
 
-    # squeeze_reference.py (핵심만)
-    def update(
-        self,
-        teleoperator,
-        *,
-        controller_T=None,
-        current_target_T=None,
-    ) -> SqueezeOutput:
+    def update(self, teleoperator) -> SqueezeOutput:
         rs = getattr(teleoperator, "right_state", None)
         pressed = self._get_float(rs, self.cfg.idx_squeeze_pressed, 0.0) if rs is not None else 0.0
 
@@ -81,38 +75,14 @@ class SqueezeReferenceController:
         just_released = pressed <= 0.5 and self._last_pressed > 0.5
         self._last_pressed = pressed
 
-        # ⭐ holding은 pressed로만 결정
-        self._holding = pressed > 0.5
-
-        target_T = None
-
-        # ⭐ go_to_zero는 falling edge로만 결정 (holding 조건 제거)
-        go_to_zero = bool(just_released)
-
-        # (선택) neutral 캡처는 press 때만
-        if just_pressed:
-            # 여기서 neutral을 갱신/리셋하는 트리거만 쓰는 게 가장 깔끔
-            if current_target_T is not None:
-                self._neutral_target_T = current_target_T
-            if controller_T is not None:
-                self._ref_controller_T = controller_T
-
-        # (선택) 상대변위 쓰는 경우에만 계산
-        if self._holding and self.cfg.use_relative_controller_delta and self._neutral_target_T is not None:
-            if controller_T is not None and self._ref_controller_T is not None:
-                target_T = self._apply_relative_delta(
-                    neutral_target_T=self._neutral_target_T,
-                    ref_controller_T=self._ref_controller_T,
-                    controller_T=controller_T,
-                )
+        holding = pressed > 0.5
 
         return SqueezeOutput(
-            holding=self._holding,
+            holding=holding,
             just_pressed=just_pressed,
             just_released=just_released,
-            go_to_zero=go_to_zero,
-            target_T=target_T,
         )
+    
     @staticmethod
     def _get_float(seq: Sequence[float], idx: int, default: float) -> float:
         try:

@@ -60,6 +60,7 @@ class VRToRobotMapper:
         # runtime state
         self.vr_neutral_pos: Optional[np.ndarray] = None  # (3,)
         self.R_vr0: Optional[np.ndarray] = None          # (3,3)
+        self.neutral_target_T: Optional[np.ndarray] = None
 
         self.prev_q_target_wxyz: Optional[np.ndarray] = None  # quaternion sign stabilization
 
@@ -85,6 +86,12 @@ class VRToRobotMapper:
         if n < self.cfg.quat_norm_eps: # 아직 값이 안 들어온 상태
             return None
         return q / n
+    
+    # hold에서 squeeze 재진입용 함수
+    def set_neutral(self, neutral_target_T, ref_controller_pose7):
+        import numpy as np
+        self.neutral_target_T = np.asarray(neutral_target_T, dtype=float).reshape(4, 4).copy()
+        self.set_neutral_from_pose7(ref_controller_pose7)
     
     def set_neutral_from_pose7(self, right_pose: np.ndarray) -> None:
         """
@@ -121,14 +128,9 @@ class VRToRobotMapper:
         self.R_vr0 = None
         self.prev_q_target_wxyz = None
 
-    def compute_target_T(
-        self,
-        right_pose: np.ndarray,
-    ) -> Tuple[Optional[np.ndarray], Dict[str, Any]]:
+    def compute_target_T(self, right_pose: np.ndarray) -> Optional[np.ndarray]:
         """
-        Returns (target_T, info).
-
-        - target_T is None when calibration is not ready or input is invalid.
+        Returns target_T (4x4) or None when calibration is not ready / input invalid.
         """
         pose = np.asarray(right_pose, dtype=float).reshape(-1)
         if pose.size != 7:
@@ -143,43 +145,50 @@ class VRToRobotMapper:
                 print("[VRMapper] vr_pos ~ 0, ignoring frame.")
             return None
 
-        # set neutral position once
+        # --- choose robot baseline pose (base_pos/base_R) ---
+        if getattr(self, "neutral_target_T", None) is not None:
+            base_T = np.asarray(self.neutral_target_T, dtype=float).reshape(4, 4)
+            base_pos = base_T[:3, 3].copy()
+            base_R   = base_T[:3, :3].copy()
+        else:
+            base_pos = np.asarray(self.ee_start_pos, dtype=float).reshape(3,)
+            base_R   = np.asarray(self.R_ee0, dtype=float).reshape(3, 3)
+
+        # set neutral position once (or reset via set_neutral_from_pose7)
         if self.vr_neutral_pos is None:
             self.vr_neutral_pos = vr_pos.copy()
             if self.debug:
                 print("[VRMapper] Set vr_neutral_pos:", self.vr_neutral_pos)
 
-        ##### position mapping: rel motion + EE_START
+        # position mapping: rel motion + base_pos
         rel_pos = vr_pos - self.vr_neutral_pos
-        mapped_pos = self.cfg.position_scale * rel_pos + self.ee_start_pos ## EE 시작 위치 + 컨트롤러 rel pos * scale 한 xyz
+        mapped_pos = self.cfg.position_scale * rel_pos + base_pos
 
-        ##### orientation mapping
+        # orientation mapping
         q_vr_wxyz = self._normalize_vr_quat(vr_quat_xyzw)
-
         if q_vr_wxyz is None:
             if self.debug:
                 print("[VRMapper] VR quaternion near zero, ignoring frame.")
             return None
-        
+
         R_vr = rotations.matrix_from_quaternion(q_vr_wxyz)
 
-        # 4-1) calibration: store R_vr0 once
+        # calibration: store R_vr0 once
         if self.R_vr0 is None:
             self.R_vr0 = R_vr.copy()
             if self.debug:
                 print("[VRMapper] Calibrated orientation baseline R_vr0 set.")
-            # 첫 프레임은 기준 잡는 용도라 target을 안 내보내는 게 안전
             return None
 
-        # 4-2) compute delta rotation in VR frame
+        # delta rotation in VR frame
         dR_vr = self.R_vr0.T @ R_vr
 
-        # 4-3) axis remap VR -> Robot
+        # axis remap VR -> Robot
         P = np.asarray(self.cfg.P, dtype=float).reshape(3, 3)
         dR_robot = P @ dR_vr @ P.T
 
-        # 4-4) robot target orientation: EE0 * dR_robot
-        R_target = self.R_ee0 @ dR_robot
+        # robot target orientation: base_R * dR_robot (기존 R_ee0 대신 base_R)
+        R_target = base_R @ dR_robot
 
         # quaternion sign stabilization (wxyz)
         q_target_wxyz = rotations.quaternion_from_matrix(R_target)

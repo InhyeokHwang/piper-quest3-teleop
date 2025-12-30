@@ -32,7 +32,7 @@ def ik_step(
     # (D) solve_ik -> velocity, integrate
     vel = mink.solve_ik(configuration, tasks, dt, solver, limits=limits)
 
-    # ✅ 지금은 분리 안정화가 목표라 smoothing은 "끄는" 걸 추천
+    # 지금은 분리 안정화가 목표라 smoothing은 "끄는" 걸 추천
     # vel_filt = smooth_vel_fn(vel, vel_filt, dt)
     # configuration.integrate_inplace(vel_filt if vel_filt is not None else vel, dt)
     vel_filt = None
