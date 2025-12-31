@@ -3,7 +3,7 @@
 
 ## Acknowledgement
 
-This project is currently being conducted under the supervision of **Dr. Hwa-Seop Lim** at the **AI Research Division, Korea Institute of Science and Technology (KIST)**.
+This project is currently being conducted under the supervision of **Dr. Hwa-Seop Lim**, **Dr. Taek-Geun Yoo** at the **AI Research Division, Korea Institute of Science and Technology (KIST)**.
 
 The system design and implementation were developed by referencing and extending several open-source research frameworks and codebases, including:
 
@@ -24,9 +24,12 @@ These references significantly informed the kinematic modeling, inverse kinemati
 
 The following improvements and extensions are planned for future development:
 
-- **Further improving IK convergence robustness**  
-  Inverse kinematics stability has been significantly improved compared to earlier versions, showing reliable convergence in most operational scenarios.  
-  Future work will focus on enhancing robustness near kinematic singularities and under highly unfavorable joint configurations to ensure consistently stable real-time teleoperation.
+- **Improve MIT Mode stability**  
+  Jitter is observed during teleoperation in MIT Mode. A smoothing and gain-tuning update is planned to address this.
 
-- **Robot joint visualization in Quest 3**  
-  Add real-time visualization of the robot arm’s joint states and configurations within the Quest environment to improve operator awareness and control precision during teleoperation.
+- **Joint control refinement & gain tuning**  
+  PID(Kp/Kd) and input filtering parameters will be iteratively optimized for more stable and compliant motion control.
+
+---
+
+**More updates coming soon.**

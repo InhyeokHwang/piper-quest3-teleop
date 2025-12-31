@@ -15,44 +15,47 @@ def enable_and_wait(
     also_open_gripper: bool = True,
     fail_hard: bool = True,
 ) -> bool:
-    """
-    Enable motors and wait until all 6 motor drivers report enabled.
-
-    Returns
-    -------
-    bool
-        True if enabled within timeout, False otherwise.
-
-    Notes
-    -----
-    - This corresponds to your previous enable_fun().
-    - fail_hard=True will raise RuntimeError on timeout (instead of exit()).
-    """
     if not driver.connected:
         raise RuntimeError("PiperDriver must be connected before enable_and_wait().")
 
     start = time.time()
+    tries = 0
+    last_exc = None
 
     while True:
-        # Try enabling each loop (SDK style)
-        driver.enable()
+        tries += 1
 
+        # enable 명령이 실제로 성공하는지/예외나는지 로그
+        try:
+            ret = driver.enable()
+            print(f"[safety] enable() try={tries} ret={ret}")
+            last_exc = None
+        except Exception as e:
+            last_exc = e
+            print(f"[safety] enable() try={tries} exception={repr(e)}")
+
+        # 그리퍼는 실패해도 계속
         if also_open_gripper:
-            # keep same behavior as your code
             try:
                 driver.set_gripper(position=0, effort=2000, enable=True)
             except Exception as e:
-                # gripper might fail depending on state; don't crash here
-                print("[safety] Gripper open command failed:", e)
+                print("[safety] Gripper open command failed:", repr(e))
 
-        enabled = driver.is_enabled()
-        print("[safety] Enable status:", enabled)
+        # is_enabled도 예외/원시값 로깅
+        try:
+            enabled = driver.is_enabled()
+            print(f"[safety] Enable status: {enabled}")
+        except Exception as e:
+            print("[safety] is_enabled() exception:", repr(e))
+            enabled = False
 
         if enabled:
             return True
 
         if (time.time() - start) > timeout_s:
             msg = f"[safety] Enable timeout after {timeout_s:.1f}s."
+            if last_exc is not None:
+                msg += f" last enable() exception={repr(last_exc)}"
             if fail_hard:
                 raise RuntimeError(msg)
             print(msg)
@@ -133,14 +136,14 @@ def move_to_start_pose(
 
     # put into joint position control mode (same call pattern as your original)
     try:
-        driver.set_motion_mode(ctrl_mode=0x01, move_mode=0x01, speed=motion_speed, acc=0x00)
+        driver.set_motion_mode(ctrl_mode=0x01, move_mode=0x01, speed=motion_speed)
     except Exception as e:
         print("[safety] MotionCtrl_2 failed (continuing):", e)
 
     current = read_joint_radians(driver, factor)
     if current is None:
-        print("[safety][WARN] Joint message structure unknown; using zeros as current.")
-        current = [0.0] * 6
+        print("[safety][ERROR] Cannot read joint state; abort move_to_start_pose for safety.")
+        return False
 
     # Interpolate and send
     for i in range(steps):

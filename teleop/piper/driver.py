@@ -1,6 +1,6 @@
 # piper/driver.py
 
-from typing import Sequence, Optional
+from typing import Sequence, Optional, Union
 import time
 
 from piper_sdk import C_PiperInterface_V2
@@ -49,17 +49,23 @@ class PiperDriver:
     def set_motion_mode(
         self,
         ctrl_mode: int = 0x01,
-        move_mode: int = 0x01,
-        speed: int = 100,
-        acc: int = 0x00,
+        move_mode: int = 0x04,
+        speed: int = 50,
+        is_mit_mode: int = 0xAD,
+        residence_time: int = 0,
+        installation_pos: int = 0x00,
     ):
-        """
-        Wrapper for MotionCtrl_2
-        """
         if not self.connected:
             raise RuntimeError("Piper is not connected.")
 
-        self._piper.MotionCtrl_2(ctrl_mode, move_mode, speed, acc)
+        self._piper.MotionCtrl_2(
+            ctrl_mode=ctrl_mode,
+            move_mode=move_mode,
+            move_spd_rate_ctrl=speed,
+            is_mit_mode=is_mit_mode,
+            residence_time=residence_time,
+            installation_pos=installation_pos,
+        )
 
     def send_joints(self, joint_values: Sequence[int]):
         """
@@ -72,6 +78,35 @@ class PiperDriver:
             raise ValueError(f"Expected 6 joint values, got {len(joint_values)}")
 
         self._piper.JointCtrl(*joint_values)
+
+    def send_joints_mit(
+        self,
+        q_ref: Sequence[float],      # rad
+        dq_ref: Sequence[float],     # rad/s (일단 0으로 둬도 됨)
+        kp: float = 3.0,
+        kd: float = 2.0,
+        tau_ref: Union[Sequence[float], float] = 0.0,
+    ):
+        if not self.connected:
+            raise RuntimeError("Piper is not connected.")
+        if len(q_ref) != 6 or len(dq_ref) != 6:
+            raise ValueError("q_ref and dq_ref must be length 6")
+
+        if isinstance(tau_ref, (int, float)):
+            tau_ref = [float(tau_ref)] * 6
+        if len(tau_ref) != 6:
+            raise ValueError("tau_ref must be length 6 or scalar")
+
+        for i in range(6):
+            motor_num = i + 1
+            self._piper.JointMitCtrl(
+                motor_num=motor_num,
+                pos_ref=float(q_ref[i]),
+                vel_ref=float(dq_ref[i]),
+                kp=float(kp),
+                kd=float(kd),
+                t_ref=float(tau_ref[i]),
+            )
 
     def set_gripper(
         self,

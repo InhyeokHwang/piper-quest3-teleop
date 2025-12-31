@@ -214,3 +214,14 @@ class VRToRobotMapper:
             print("====================================")
 
         return target_T
+    
+    def reset_state(self, *, keep_neutral_target: bool = False) -> None:
+        self.vr_neutral_pos = None
+        self.R_vr0 = None
+        self.prev_q_target_wxyz = None
+        if not keep_neutral_target:
+            self.neutral_target_T = None
+
+        if self.debug:
+            print("[VRMapper] reset_state(): cleared VR baselines"
+                + ("" if keep_neutral_target else " + neutral_target_T"))

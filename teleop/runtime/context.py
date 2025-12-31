@@ -38,9 +38,17 @@ class RuntimeContext:
     T_zero: np.ndarray
     target_T: Optional[np.ndarray]  # <- 여기서도 default 주지 말거나, 아래로 내려
 
+
     # ----- default fields MUST be last -----
     driver: Optional[object] = None
     _closed: bool = False
+
+    # 시작할 때 / returning 이후에 joint 0 쏘는 부분
+    startup_sent_zero: bool = False
+    sent_joint_zero: bool = False
+    hold_target: Optional[np.ndarray] = None
+    mode: str = "RETURNING"
+
 
     def close(self):
         """Release resources safely (idempotent)."""

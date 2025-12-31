@@ -16,18 +16,23 @@ from .runtime.return_zero_pos_init import init_return_zero_pos
 
 
 from .control.gripper_stepper import step_gripper
-from .control.smoothing import make_pose_params, make_vel_params, smooth_target
+from .control.smoothing import make_vel_params 
 from .control.ik_stepper import ik_step
-from .control.sender import piper_send
+
+from .control.sender import piper_send_jointctrl
+# from .control.sender import piper_send_mit  # (MIT 테스트용)
 
 from .piper.driver import PiperDriver
 from .piper.safety import enable_and_wait
 
+## 반환 값은 run_loop로 들어감 -> 실행에 필요한 모든 객체를 초기화
 def build_runtime(args) -> RuntimeContext:
     teleoperator = VuerTeleop(args.config)
     cam = init_camera(teleoperator, args.camera) #카메라 켜기, 없다면 None
 
     fk, q_zero, EE_START, R_ee0 = init_fk_and_start() # EE_START는 zero pos에 대한 x y z, R_ee0는 zero pos에 대한 rotation mat
+    
+
     # build T_zero (4x4)
     T_zero = np.eye(4, dtype=float)
     T_zero[:3, :3] = R_ee0
@@ -39,6 +44,16 @@ def build_runtime(args) -> RuntimeContext:
     mapper = init_mapper(EE_START, R_ee0, debug=args.debug_mapper)
 
     model, data, configuration, tasks, limits, solver, rate = init_mink(q_zero)
+    
+    # 시작 조인트 0 
+    for k in range(6):
+        j = model.joint(f"joint{k+1}")
+        adr = int(np.asarray(j.qposadr).item())
+        data.qpos[adr] = 0.0
+        vadr = int(np.asarray(j.dofadr).item())
+        data.qvel[vadr] = 0.0
+    mujoco.mj_forward(model, data)
+
     viewer = init_viewer(model, data, args.dry_run)
 
     # gripper indices
@@ -55,7 +70,10 @@ def build_runtime(args) -> RuntimeContext:
         driver = PiperDriver(args.can)
         driver.connect()
         enable_and_wait(driver, timeout_s=5.0, fail_hard=True, also_open_gripper=True)
-        driver.set_motion_mode(ctrl_mode=0x01, move_mode=0x01, speed=100, acc=0x00)
+
+        driver.set_motion_mode(ctrl_mode=0x01, move_mode=0x01, speed=50, is_mit_mode=0x00)  # joint mode
+        # driver.set_motion_mode(ctrl_mode=0x01, move_mode=0x04, speed=100, is_mit_mode=0xAD) # mit mode
+        
         driver.set_gripper(position=20000, effort=2000, enable=True, clear_error=True)
         print("[Piper] Ready.")
     else:
@@ -73,14 +91,20 @@ def build_runtime(args) -> RuntimeContext:
         q_idx7=q_idx7, q_idx8=q_idx8,
         driver=driver,
         target_T=None,
+        startup_sent_zero=False, # 시작할 때 0 쏘기
+        sent_joint_zero=False, # returning 이후에 0 쏘기
+        hold_target=None,
+        mode="RETURNING"
     )
     return rt
 
-def pose_reached(T_cur, T_goal, pos_tol=0.03):
-    return np.linalg.norm(T_cur[:3,3] - T_goal[:3,3]) <= pos_tol
+
+def joints123_near_zero(q, tol_deg=5.0):
+    tol = np.deg2rad(tol_deg)
+    q = np.asarray(q).reshape(-1)
+    return np.all(np.abs(q[:3]) <= tol)
 
 def run_loop(args, rt: RuntimeContext):
-    pose_params = make_pose_params()
     vel_params = make_vel_params()
 
     send_hz = float(getattr(config, "SEND_RATE_HZ", 60.0))
@@ -89,8 +113,47 @@ def run_loop(args, rt: RuntimeContext):
 
     try:
         while True:
+            ## viewer가 살아있는지 체크
             if rt.viewer is not None and not rt.viewer.is_running():
                 break
+
+            if not rt.startup_sent_zero:
+                rt.last_q[:6] = 0.0
+
+                # sim 상태도 유지
+                for k in range(6):
+                    j = rt.model.joint(f"joint{k+1}")
+                    adr = int(np.asarray(j.qposadr).item())
+                    rt.data.qpos[adr] = 0.0
+                    vadr = int(np.asarray(j.dofadr).item())
+                    rt.data.qvel[vadr] = 0.0
+                mujoco.mj_forward(rt.model, rt.data)
+
+                # 바로 송신 (dry-run이면 출력)
+                next_send = piper_send_jointctrl(
+                    getattr(rt, "driver", None),
+                    args.dry_run,
+                    rt.last_q,
+                    0,  # grip은 지금 값 써도 됨
+                    next_send,
+                    send_period,
+                    config.RAD_TO_PIPER
+                )
+
+                # ---- MIT로 바꿔보고 싶으면 아래로 교체 ----
+                # next_send = piper_send_mit(
+                #     getattr(rt, "driver", None),
+                #     args.dry_run,
+                #     rt.last_q,
+                #     0,
+                #     next_send,
+                #     send_period,
+                #     kp=5.0, kd=0.1, tau_ref=0.0
+                # )
+
+                rt.startup_sent_zero = True
+                rt.rate.sleep()
+                continue  # 첫 프레임은 IK/모드로직 안 탐
 
             loop_t0 = time.time()
 
@@ -104,10 +167,6 @@ def run_loop(args, rt: RuntimeContext):
             ## AT_ZERO - zero position에 도착한 상태
             ## HOLD - 자세 유지
             ## TELEOP - squeeze 버튼을 누르고 있는 상태 (TELEOP중인 상태)
-            if not hasattr(rt, "mode"):
-                rt.mode = "RETURNING"
-            if not hasattr(rt, "hold_target"):
-                rt.hold_target = None
 
             # squeeze (teleop)
             sq_out = rt.squeeze_ctl.update(rt.teleoperator)
@@ -115,15 +174,29 @@ def run_loop(args, rt: RuntimeContext):
             # ret_zero
             ret_out = rt.ret_zero_ctl.update(rt.teleoperator)
 
-
             # 현재 로봇 EE pose 얻기
             T_cur = rt.fk.compute_fk(rt.last_q)
 
             if rt.mode == "RETURNING":
-                if pose_reached(T_cur, rt.T_zero, pos_tol=0.03):
+                if joints123_near_zero(rt.last_q, tol_deg=5.0):
                     rt.mode = "AT_ZERO"
                     rt.T_filt = None
                     rt.vel_filt = None
+                    rt.mapper.reset_state(keep_neutral_target=False)
+
+                    # 이미 1~3이 near-zero니까 강제 0이 불연속이 거의 없음
+                    if not rt.sent_joint_zero:
+                        rt.last_q[:6] = 0.0
+                        # mujoco도 0 반영
+                        for k in range(6):
+                            j = rt.model.joint(f"joint{k+1}")
+                            adr = int(np.asarray(j.qposadr).item())
+                            rt.data.qpos[adr] = 0.0
+                            vadr = int(np.asarray(j.dofadr).item())
+                            rt.data.qvel[vadr] = 0.0
+                        mujoco.mj_forward(rt.model, rt.data)
+
+                        rt.sent_joint_zero = True
                 target_T = rt.T_zero
 
             elif rt.mode == "AT_ZERO":
@@ -133,8 +206,9 @@ def run_loop(args, rt: RuntimeContext):
                     controller_anchor = rt.teleoperator.tv.right_controller[:3, 3].copy()
                     rt.teleoperator.tv.enable_skeleton(controller_anchor)
 
-                    rt.mapper.set_neutral(rt.T_zero, right_pose)
+                    rt.mapper.set_neutral(T_cur, right_pose)
                     rt.T_filt = None
+                    rt.last_q[:6] = 0.0     
                     rt.vel_filt = None
                     rt.mode = "TELEOP"
                     rt.rate.sleep()
@@ -160,6 +234,7 @@ def run_loop(args, rt: RuntimeContext):
                     rt.mode = "RETURNING"
                     rt.T_filt = None
                     rt.vel_filt = None
+                    rt.sent_joint_zero = False
                     if hasattr(rt.mapper, "neutral_target_T"):
                         rt.mapper.neutral_target_T = None
 
@@ -175,26 +250,25 @@ def run_loop(args, rt: RuntimeContext):
                     rt.vel_filt = None
             ###################################################
 
-            rt.T_filt = smooth_target(rt.T_filt, target_T, pose_params)
-            target_T_use = rt.T_filt
             
             ############### IK step #####################
-            try:
-                dt = rt.rate.dt
-                def _smooth_vel(vel, vel_filt, dt):
-                    # 여기서 vel_params를 닫아둠
-                    from .control.smoothing import smooth_vel
-                    return smooth_vel(vel, vel_filt, dt, vel_params)
+            if rt.mode != "AT_ZERO": # AT_ZERO에서는 
+                try:
+                    dt = rt.rate.dt
+                    def _smooth_vel(vel, vel_filt, dt):
+                        # 여기서 vel_params를 닫아둠
+                        from .control.smoothing import smooth_vel
+                        return smooth_vel(vel, vel_filt, dt, vel_params)
 
-                rt.last_q, rt.vel_filt = ik_step(
-                    rt.model, rt.data, rt.configuration,
-                    rt.tasks, rt.limits, rt.solver, dt,
-                    rt.last_q, target_T_use,
-                    g.joint7, g.joint8, rt.q_idx7, rt.q_idx8,
-                    rt.vel_filt, _smooth_vel
-                )
-            except Exception as e:
-                print("[mink IK] Failed -> keep last_q:", repr(e))
+                    rt.last_q, rt.vel_filt = ik_step(
+                        rt.model, rt.data, rt.configuration,
+                        rt.tasks, rt.limits, rt.solver, dt,
+                        rt.last_q, target_T,
+                        g.joint7, g.joint8, rt.q_idx7, rt.q_idx8,
+                        rt.vel_filt, _smooth_vel
+                    )
+                except Exception as e:
+                    print("[mink IK] Failed -> keep last_q:", repr(e))
             ##############################################
 
 
@@ -205,7 +279,7 @@ def run_loop(args, rt: RuntimeContext):
             ##############################################
 
             ############## send to robot ##################
-            next_send = piper_send(
+            next_send = piper_send_jointctrl(
                 getattr(rt, "driver", None),
                 args.dry_run,
                 rt.last_q,
@@ -214,6 +288,17 @@ def run_loop(args, rt: RuntimeContext):
                 send_period,
                 config.RAD_TO_PIPER
             )
+
+            # ---- MIT로 바꿔보고 싶으면 아래로 교체 ----
+            # next_send = piper_send_mit(
+            #     getattr(rt, "driver", None),
+            #     args.dry_run,
+            #     rt.last_q,
+            #     g.grip_um,
+            #     next_send,
+            #     send_period,
+            #     kp=5.0, kd=0.1, tau_ref=0.0
+            # )
             ###############################################
 
             # 카메라
