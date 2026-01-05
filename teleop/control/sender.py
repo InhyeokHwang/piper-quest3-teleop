@@ -25,8 +25,6 @@ def piper_send_jointctrl(
     q = _vec6(last_q)
 
     if driver is None:
-        if dry_run:
-            print(f"[DRY RUN] (no driver) JointCtrl q(rad)={q}")
         return next_send
 
     # rad -> piper internal int (너가 쓰던 방식)
@@ -41,7 +39,6 @@ def piper_send_jointctrl(
         if prev_grip is None or abs(int(grip_um) - int(prev_grip)) > 50:
             driver.set_gripper(position=grip_um, effort=2000, enable=True)
             driver._prev_grip_um = int(grip_um)
-
     return next_send
 
 

@@ -51,16 +51,14 @@ class OpenTeleVision:
         self.right_controller_shared = Array('d', 16, lock=True) ## 4x4 (오른손)
         self.right_state_shared = Array('d', 14, lock=True)
         
-        # -------------------------
         # Robot skeleton shared memory (joints xyz)
-        # -------------------------
-        self.max_joints = 8  # 넉넉히. piper면 보통 7~8이면 충분
-        self.robot_n_joints = Value('i', 0, lock=True)                 # 현재 유효 조인트 개수
+        self.max_joints = 8  # 넉넉히
+        self.robot_n_joints = Value('i', 0, lock=True)  # 현재 유효 조인트 개수
         self.robot_joints_shared = Array('d', 3 * self.max_joints, lock=True)  # xyz flat
 
-        # (예시) base->...->ee 연결. 너 FK 조인트 순서에 맞게 바꿔야 함
-        # N개 조인트면 edges는 [(0,1),(1,2)...]
-        self.robot_edges = []
+        # base->...->ee 연결. FK 조인트 순서에 맞게
+        # edges(joint - joint 링크) 는 [(0,1),(1,2)...]
+        self.robot_edges = [] 
 
         self.skel = VuerRobotSkeleton(
             edges=self.robot_edges,
@@ -76,13 +74,15 @@ class OpenTeleVision:
             [0.0, 1.0, 0.0],
             [-1.0, 0.0, 0.0],
         ], dtype=float)  # yaw +90
-        ##########################################
 
-        # --- EE-anchor calibration state ---
+        ## 쉽게 이해하기 위한 식은 아래와 같음
+        # ee_vuer = ee_fk + (anchor_in_vuer - ee_fk)
+
+        # EE-anchor calibration state (실제 로봇 좌표계에서 계산된 EE 위치를 quest3 위치로 옮기는 평행이동)
         self._world_offset = None  # np.array shape (3,) or None
 
-        # EE를 Vuer에서 어디에 놓을지 (원점에 두려면 [0,0,0])
-        self._anchor_in_vuer = np.array([0.0, 0.8, -1.5], dtype=float)
+        # Vuer 상에서 EE의 위치(컨트롤러의 위치)
+        self._anchor_in_vuer = np.array([0.0, 0.0, 0.0], dtype=float)
 
         # joints_xyz에서 EE 인덱스 (보통 마지막이면 -1)
         self._ee_index = -1
@@ -129,13 +129,13 @@ class OpenTeleVision:
                     float(ts[0] if len(ts) > 0 else 0.0),            # 10
                     float(ts[1] if len(ts) > 1 else 0.0),            # 11
 
-                    1.0 if rs.get("aButtonValue", False) else 0.0,   # 12  (문서상 boolean)
+                    1.0 if rs.get("aButtonValue", False) else 0.0,   # 12  
                     1.0 if rs.get("bButtonValue", False) else 0.0,   # 13
                 ]
         except Exception as e:
             print("[CONTROLLER_MOVE] error:", e)
 
-
+    ################### quest3에 그려질 로봇 조인트 스켈레톤 관련 #######################
     def enable_skeleton(self, anchor_pos_vuer: np.ndarray):
         self._anchor_in_vuer = np.asarray(anchor_pos_vuer, dtype=float).reshape(3,)
         self._world_offset = None  
@@ -157,7 +157,7 @@ class OpenTeleVision:
         if getattr(self, "_R_yaw", None) is not None:
             arr_v = (self._R_yaw @ arr_v.T).T
 
-        # 최초 1회: EE 기준 오프셋 캘리브레이션 (yaw 적용된 ee0로)
+        # EE 기준 오프셋 캘리브레이션 (yaw 적용된 ee0로)
         if self._world_offset is None and arr_v.shape[0] >= 1:
             ee0 = arr_v[self._ee_index].copy()
             self._world_offset = self._anchor_in_vuer - ee0
@@ -182,7 +182,7 @@ class OpenTeleVision:
                 flat[base + 0] = float(arr_v[i, 0])
                 flat[base + 1] = float(arr_v[i, 1])
                 flat[base + 2] = float(arr_v[i, 2])
-
+    ########################################################################
 
     async def main_image(self, session, fps=60):
         # 그리드 끄기
@@ -190,69 +190,69 @@ class OpenTeleVision:
         
         # 컨트롤러
         session.upsert @ MotionControllers(stream=True, key="motion-controller", left=True, right=True,)
-            
-        while True:
-            display_image = self.img_array
+        
+        try:
+            while True:
+                display_image = self.img_array
 
-            session.upsert(
-            [ImageBackground(
-                # Can scale the images down.
-                # display_image[::2, :self.img_width],
-                # display_image[:self.img_height:2, ::2],
-                display_image[::2, :self.img_width:2],
-                # 'jpg' encoding is significantly faster than 'png'.
-                format="jpeg",
-                quality=80,
-                key="left-image",
-                interpolate=True,
-                # fixed=True,
-                aspect=1.66667,
-                # distanceToCamera=0.5,
-                height = 2,
-                position=[0, 1, 3],
-                # rotation=[0, 0, 0],
-                layers=1, 
-            ),
-            ImageBackground(
-                # Can scale the images down.
-                # display_image[::2, self.img_width:],
-                # display_image[self.img_height::2, ::2],
-                display_image[::2, self.img_width::2],
-                # 'jpg' encoding is significantly faster than 'png'.
-                format="jpeg",
-                quality=80,
-                key="right-image",
-                interpolate=True,
-                # fixed=True,
-                aspect=1.66667,
-                # distanceToCamera=0.5,
-                height = 2,
-                position=[0, 1, 3],
-                # rotation=[0, 0, 0],
-                layers=2, 
-            )],
-            to="bgChildren",
-            )
+                # 카메라 스트리밍
+                session.upsert(
+                [ImageBackground(
+                    display_image[::2, :self.img_width:2],
+                    # 'jpg' encoding is significantly faster than 'png'.
+                    format="jpeg",
+                    quality=80,
+                    key="left-image",
+                    interpolate=True,
+                    # fixed=True,
+                    aspect=1.66667,
+                    # distanceToCamera=0.5,
+                    height = 2,
+                    position=[0, 1, 3],
+                    # rotation=[0, 0, 0],
+                    layers=1, 
+                ),
+                ImageBackground(
+                    display_image[::2, self.img_width::2],
+                    # 'jpg' encoding is significantly faster than 'png'.
+                    format="jpeg",
+                    quality=80,
+                    key="right-image",
+                    interpolate=True,
+                    # fixed=True,
+                    aspect=1.66667,
+                    # distanceToCamera=0.5,
+                    height = 2,
+                    position=[0, 1, 3],
+                    # rotation=[0, 0, 0],
+                    layers=2, 
+                )],
+                to="bgChildren",
+                )
 
-            # 로봇 스켈레톤 그리기
-            with self.robot_n_joints.get_lock(), self.robot_joints_shared.get_lock():
-                n = int(self.robot_n_joints.value)
-                if n >= 2:
-                    buf = np.array(self.robot_joints_shared[: 3 * n], dtype=float)
-                else:
-                    buf = None
+                # 로봇 스켈레톤 그리기
+                with self.robot_n_joints.get_lock(), self.robot_joints_shared.get_lock():
+                    n = int(self.robot_n_joints.value)
+                    if n >= 2:
+                        buf = np.array(self.robot_joints_shared[: 3 * n], dtype=float)
+                    else:
+                        buf = None
 
-            if n >= 2 and buf is not None:
-                joints = buf.reshape(n, 3).copy()
+                if n >= 2 and buf is not None:
+                    joints = buf.reshape(n, 3).copy()
 
-                # edges 동기화 (체인 형태)
-                self.skel.edges = [(i, i + 1) for i in range(n - 1)]
+                    # edges 동기화 (체인 형태)
+                    self.skel.edges = [(i, i + 1) for i in range(n - 1)]
 
-                self.skel.upsert(session, joints)
-            # else:
-            #     self.skel.clear(session)
+                    self.skel.upsert(session, joints)
 
-            await asyncio.sleep(0.03)
+                await asyncio.sleep(0.03)
+        
+        except asyncio.CancelledError:
+            raise
+        except Exception as e: ## Web Socket 끊김 
+            print("[main_image] session ended:", repr(e))
+            return
             
         
     @property
@@ -271,53 +271,3 @@ class OpenTeleVision:
         # with self.aspect_shared.get_lock():
             # return float(self.aspect_shared.value)
         return float(self.aspect_shared.value)
-
-
-### VR 기기 쪽에서 발생하는 이벤트들이 서버쪽 공유메모리에 올바르게 잘 기록이 되는지 검증하는 테스트    
-if __name__ == "__main__":
-    import time
-    import numpy as np
-    from multiprocessing import shared_memory, Queue, Event
-
-    # VR에서 사용할 해상도 설정 (한 눈 기준)
-    resolution = (720, 1280)
-    crop_size_w = 340
-    crop_size_h = 270
-    resolution_cropped = (
-        resolution[0] - crop_size_h,      # height
-        resolution[1] - 2 * crop_size_w   # width
-    )  # 예: (450, 600)
-
-    # 공유 메모리용 전체 이미지 shape (H=2*height, W=width, 3채널)
-    img_shape = (2 * resolution_cropped[0], resolution_cropped[1], 3)
-    img_height, img_width = resolution_cropped[:2]
-
-    # 공유 메모리 생성
-    shm = shared_memory.SharedMemory(
-        create=True,
-        size=np.prod(img_shape) * np.uint8().itemsize
-    )
-    shm_name = shm.name
-    img_array = np.ndarray(img_shape, dtype=np.uint8, buffer=shm.buf)
-    img_array[:] = 0  # 초기 화면은 검정색
-
-
-    # OpenTeleVision 생성 (image 모드)
-    tv = OpenTeleVision(
-        resolution_cropped,
-        shm_name,
-        stream_mode="image",
-        cert_file="./cert.pem",
-        key_file="./key.pem",
-    )
-
-    # 테스트: 컨트롤러 기준 오른손 pose 출력
-    try:
-        while True:
-            print("right_controller:\n", tv.right_controller)
-            time.sleep(0.5)
-    except KeyboardInterrupt:
-        print("Exit.")
-    finally:
-        shm.close()
-        shm.unlink()

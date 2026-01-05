@@ -2,6 +2,7 @@
 import time
 import numpy as np
 import mujoco
+import mink
 
 from .VuerTeleop import VuerTeleop
 from . import config
@@ -104,6 +105,50 @@ def joints123_near_zero(q, tol_deg=5.0):
     q = np.asarray(q).reshape(-1)
     return np.all(np.abs(q[:3]) <= tol)
 
+def reset_to_zero_like_init(rt, q_zero: np.ndarray):
+    q_zero = np.asarray(q_zero, dtype=float).reshape(6,)
+
+    rt.last_q[:6] = q_zero.copy()
+
+    # mujoco state를 먼저 0으로 (FK/Jacobian 기준)
+    for k in range(6):
+        j = rt.model.joint(f"joint{k+1}")
+        adr = int(np.asarray(j.qposadr).item())
+        rt.data.qpos[adr] = float(q_zero[k])
+        vadr = int(np.asarray(j.dofadr).item())
+        rt.data.qvel[vadr] = 0.0
+    mujoco.mj_forward(rt.model, rt.data)
+
+    # mink configuration을 새로 생성 (과거 상태 싹 제거)
+    rt.configuration = mink.Configuration(rt.model)
+
+    q_full = rt.configuration.q.copy()
+    q_full[:6] = q_zero
+    rt.configuration.q[:] = q_full
+
+    # tasks도 새로 생성
+    ee_task = mink.FrameTask(
+        frame_name=config.MINK_EE_SITE,  
+        frame_type="site",
+        position_cost=1.0,
+        orientation_cost=0.3,
+        lm_damping=float(getattr(config, "MINK_LM_DAMPING", 1e-6)),
+    )
+    posture_task = mink.PostureTask(
+        rt.model,
+        cost=float(getattr(config, "MINK_POSTURE_COST", 1e-3))
+    )
+    rt.tasks = [ee_task, posture_task]
+
+    # posture target = q_zero로 확정
+    q_rest_full = rt.configuration.q.copy()
+    q_rest_full[:6] = q_zero
+    posture_task.set_target(q_rest_full)
+
+    # 필터도 같이 초기화
+    rt.T_filt = None
+    rt.vel_filt = None
+
 def run_loop(args, rt: RuntimeContext):
     vel_params = make_vel_params()
 
@@ -120,7 +165,7 @@ def run_loop(args, rt: RuntimeContext):
             if not rt.startup_sent_zero:
                 rt.last_q[:6] = 0.0
 
-                # sim 상태도 유지
+                # viewer 상태도 유지
                 for k in range(6):
                     j = rt.model.joint(f"joint{k+1}")
                     adr = int(np.asarray(j.qposadr).item())
@@ -180,36 +225,29 @@ def run_loop(args, rt: RuntimeContext):
             if rt.mode == "RETURNING":
                 if joints123_near_zero(rt.last_q, tol_deg=5.0):
                     rt.mode = "AT_ZERO"
-                    rt.T_filt = None
-                    rt.vel_filt = None
                     rt.mapper.reset_state(keep_neutral_target=False)
 
-                    # 이미 1~3이 near-zero니까 강제 0이 불연속이 거의 없음
                     if not rt.sent_joint_zero:
-                        rt.last_q[:6] = 0.0
-                        # mujoco도 0 반영
-                        for k in range(6):
-                            j = rt.model.joint(f"joint{k+1}")
-                            adr = int(np.asarray(j.qposadr).item())
-                            rt.data.qpos[adr] = 0.0
-                            vadr = int(np.asarray(j.dofadr).item())
-                            rt.data.qvel[vadr] = 0.0
-                        mujoco.mj_forward(rt.model, rt.data)
-
+                        q_zero6 = np.zeros(6, dtype=float)
+                        reset_to_zero_like_init(rt, q_zero6)
                         rt.sent_joint_zero = True
                 target_T = rt.T_zero
 
             elif rt.mode == "AT_ZERO":
                 target_T = rt.T_zero
 
+                # squeeze 누름
                 if sq_out.just_pressed:
+                    # quest 쪽 스켈레톤 anchor는 지금 컨트롤러 위치로 리셋
                     controller_anchor = rt.teleoperator.tv.right_controller[:3, 3].copy()
                     rt.teleoperator.tv.enable_skeleton(controller_anchor)
 
-                    rt.mapper.set_neutral(T_cur, right_pose)
-                    rt.T_filt = None
-                    rt.last_q[:6] = 0.0     
-                    rt.vel_filt = None
+                    q_zero6 = np.zeros(6, dtype=float)
+                    reset_to_zero_like_init(rt, q_zero6)
+
+                    # neutral 잡기
+                    rt.mapper.set_neutral(rt.T_zero, right_pose)
+
                     rt.mode = "TELEOP"
                     rt.rate.sleep()
                     continue
@@ -252,7 +290,7 @@ def run_loop(args, rt: RuntimeContext):
 
             
             ############### IK step #####################
-            if rt.mode != "AT_ZERO": # AT_ZERO에서는 
+            if rt.mode != "AT_ZERO":
                 try:
                     dt = rt.rate.dt
                     def _smooth_vel(vel, vel_filt, dt):
@@ -265,7 +303,7 @@ def run_loop(args, rt: RuntimeContext):
                         rt.tasks, rt.limits, rt.solver, dt,
                         rt.last_q, target_T,
                         g.joint7, g.joint8, rt.q_idx7, rt.q_idx8,
-                        rt.vel_filt, _smooth_vel
+                        rt.vel_filt, _smooth_vel, debug_qpos_check=True
                     )
                 except Exception as e:
                     print("[mink IK] Failed -> keep last_q:", repr(e))
