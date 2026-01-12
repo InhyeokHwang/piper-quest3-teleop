@@ -47,9 +47,12 @@ class OpenTeleVision:
             raise ValueError("stream_mode must be 'image'")
 
         
-        # 컨트롤러
+        # RIGHT 컨트롤러
         self.right_controller_shared = Array('d', 16, lock=True) ## 4x4 (오른손)
         self.right_state_shared = Array('d', 14, lock=True)
+
+        # LEFT 컨트롤러
+        self.left_state_shared = Array('d', 14, lock=True)
         
         # Robot skeleton shared memory (joints xyz)
         self.max_joints = 8  # 넉넉히
@@ -132,6 +135,33 @@ class OpenTeleVision:
                     1.0 if rs.get("aButtonValue", False) else 0.0,   # 12  
                     1.0 if rs.get("bButtonValue", False) else 0.0,   # 13
                 ]
+
+            # LEFT state
+            ls = data.get("leftState") or {}
+            if isinstance(ls, dict):
+                tp = ls.get("touchpadValue") or [0.0, 0.0]
+                ts = ls.get("thumbstickValue") or [0.0, 0.0]
+
+                self.left_state_shared[:] = [
+                    1.0 if ls.get("trigger", False) else 0.0,        # 0
+                    1.0 if ls.get("squeeze", False) else 0.0,        # 1
+                    1.0 if ls.get("touchpad", False) else 0.0,       # 2
+                    1.0 if ls.get("thumbstick", False) else 0.0,     # 3
+                    1.0 if ls.get("xButton", False) else 0.0,        # 4 
+                    1.0 if ls.get("yButton", False) else 0.0,        # 5
+
+                    float(ls.get("triggerValue", 0.0) or 0.0),       # 6
+                    float(ls.get("squeezeValue", 0.0) or 0.0),       # 7
+                    float(tp[0] if len(tp) > 0 else 0.0),            # 8
+                    float(tp[1] if len(tp) > 1 else 0.0),            # 9
+                    float(ts[0] if len(ts) > 0 else 0.0),            # 10
+                    float(ts[1] if len(ts) > 1 else 0.0),            # 11
+
+                    1.0 if ls.get("xButtonValue", False) else 0.0,   # 12
+                    1.0 if ls.get("yButtonValue", False) else 0.0,   # 13
+                ]
+
+
         except Exception as e:
             print("[CONTROLLER_MOVE] error:", e)
 
@@ -266,6 +296,13 @@ class OpenTeleVision:
         """
         return np.array(self.right_state_shared[:], dtype=float)
 
+    @property
+    def left_state(self) -> np.ndarray:
+        """
+        left_state shape: (14,)
+        """
+        return np.array(self.left_state_shared[:], dtype=float)
+    
     @property
     def aspect(self):
         # with self.aspect_shared.get_lock():

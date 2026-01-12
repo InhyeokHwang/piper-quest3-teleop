@@ -6,20 +6,12 @@ from multiprocessing import Event, Queue, shared_memory
 from typing import Tuple
 
 import numpy as np
-import yaml
 from pytransform3d import rotations
 
 from .TeleVision import OpenTeleVision
 from .Preprocessor import VuerPreprocessor
 
 class VuerTeleop:
-    """
-    - SharedMemory에 (H, 2W, 3) uint8 RGB 버퍼를 만들고
-    - OpenTeleVision이 Quest3에 접속용 서버를 띄우고
-    - VuerPreprocessor가 VR raw pose(y-up 등)를 z-up/x-forward 기준으로 보정한 뒤
-      head_mat / left_wrist_mat / right_wrist_mat을 반환한다고 가정하는 구조.
-    """
-
     def __init__(self, config_file_path: str):
         # Vuer/Quest3에서 쓸 이미지 해상도 (H, W)
         self.resolution = (720, 1280)
@@ -80,6 +72,9 @@ class VuerTeleop:
     @property
     def right_state(self) -> np.ndarray:
         return self.tv.right_state
+    @property
+    def left_state(self) -> np.ndarray:
+        return self.tv.left_state
     
     def close(self) -> None:
         shm = getattr(self, "shm", None)

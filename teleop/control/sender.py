@@ -24,21 +24,23 @@ def piper_send_jointctrl(
 
     q = _vec6(last_q)
 
-    if driver is None:
-        return next_send
-
-    # rad -> piper internal int (너가 쓰던 방식)
+    # rad -> piper internal int
     joint_int = [int(round(q[i] * rad_to_piper)) for i in range(6)]
 
     if dry_run:
-        print(f"[DRY RUN] JointCtrl joint_int={joint_int}")
-    else:
-        driver.send_joints(joint_int)
-        # 그리퍼는 매번 보내지 말고 변화 있을 때만 추천(버스/지터 줄임)
-        prev_grip = getattr(driver, "_prev_grip_um", None)
-        if prev_grip is None or abs(int(grip_um) - int(prev_grip)) > 50:
-            driver.set_gripper(position=grip_um, effort=2000, enable=True)
-            driver._prev_grip_um = int(grip_um)
+        # print(f"[DRY RUN] JointCtrl joint_int={joint_int}")
+        return next_send
+    
+    if driver is None:
+        return next_send
+
+    driver.send_joints(joint_int)
+
+    prev_grip = getattr(driver, "_prev_grip_um", None)
+    if prev_grip is None or abs(int(grip_um) - int(prev_grip)) > 50:
+        driver.set_gripper(position=grip_um, effort=2000, enable=True)
+        driver._prev_grip_um = int(grip_um)
+
     return next_send
 
 

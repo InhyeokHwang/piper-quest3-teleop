@@ -1,7 +1,6 @@
-import math
 import numpy as np
 
-from .constants_vuer import grd_yup2grd_zup, hand2inspire
+from .constants_vuer import grd_yup2grd_zup
 from .motion_utils import mat_update, fast_mat_inv
 from .TeleVision import OpenTeleVision
 
@@ -10,6 +9,8 @@ class VuerPreprocessor:
     def __init__(self): 
         # vuer를 키고 시작하는 오른쪽 컨트롤러의 절대 좌표 시작점
         self.vuer_right_ctrl_mat = np.eye(4)
+        self._T = grd_yup2grd_zup
+        self._Tinv = fast_mat_inv(grd_yup2grd_zup)
         # [[1 0 0 0]
         #  [0 1 0 0]
         #  [0 0 1 0]
@@ -22,6 +23,6 @@ class VuerPreprocessor:
 
         # Y up 시스템(VR에서 쓰는 좌표계)을 Z up 시스템(시뮬레이션/제어 에서 쓰는 좌표계)으로 바꾸어야 함.
         # 새로운 행렬 = (변환행렬) x (기존 자세) x (변환행렬^-1) -> 기저변환
-        right_ctrl  = grd_yup2grd_zup @ self.vuer_right_ctrl_mat @ fast_mat_inv(grd_yup2grd_zup)
+        right_ctrl = self._T @ self.vuer_right_ctrl_mat @ self._Tinv
 
         return right_ctrl

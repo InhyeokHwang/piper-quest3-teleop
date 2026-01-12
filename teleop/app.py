@@ -17,7 +17,6 @@ from .runtime.return_zero_pos_init import init_return_zero_pos
 
 
 from .control.gripper_stepper import step_gripper
-from .control.smoothing import make_vel_params 
 from .control.ik_stepper import ik_step
 
 from .control.sender import piper_send_jointctrl
@@ -150,7 +149,6 @@ def reset_to_zero_like_init(rt, q_zero: np.ndarray):
     rt.vel_filt = None
 
 def run_loop(args, rt: RuntimeContext):
-    vel_params = make_vel_params()
 
     send_hz = float(getattr(config, "SEND_RATE_HZ", 60.0))
     send_period = 1.0 / max(send_hz, 1e-6)
@@ -204,6 +202,66 @@ def run_loop(args, rt: RuntimeContext):
 
             # vr로부터 오른손 컨트롤러 정보 수신
             right_pose = rt.teleoperator.step()
+
+            # ---------- LEFT input debug (thumbstick + trigger + squeeze + X/Y) ----------
+            ls = rt.teleoperator.left_state  # shape (14,)
+
+            # raw thumbstick (Quest 기준)
+            lx_raw = float(ls[10])   # +right
+            ly_raw = float(ls[11])   # +down
+
+            # trigger / squeeze / buttons (bool + analog)
+            tr_btn = bool(ls[0])
+            sq_btn = bool(ls[1])
+            x_btn  = bool(ls[4])
+            y_btn  = bool(ls[5])
+
+            tr_val = float(ls[6])    # 0..1
+            sq_val = float(ls[7])    # 0..1
+
+            # deadband on stick
+            deadband = 0.15
+            lx = 0.0 if abs(lx_raw) < deadband else lx_raw
+            ly = 0.0 if abs(ly_raw) < deadband else ly_raw
+
+            # Vision60 command mapping
+            v_forward = -ly
+            w_yaw     = -lx
+
+            # scale
+            MAX_V = 0.6   # m/s
+            MAX_W = 1.2   # rad/s
+
+            cmd_v = MAX_V * v_forward
+            cmd_w = MAX_W * w_yaw
+
+            # 출력 조건:
+            #  - 이동 명령이 있거나
+            #  - trigger / squeeze / X / Y 중 하나라도 눌렸을 때
+            active = (
+                abs(cmd_v) > 1e-3 or
+                abs(cmd_w) > 1e-3 or
+                tr_val > 0.05 or
+                sq_val > 0.05 or
+                x_btn or
+                y_btn
+            )
+
+            # 10Hz 출력 제한
+            now = time.monotonic()
+            if active and (now - getattr(rt, "_last_left_print_t", 0.0) > 0.10):
+                print(
+                    f"[LEFT] "
+                    f"stick(x={lx:+.2f}, y={ly:+.2f}) | "
+                    f"cmd(v={cmd_v:+.2f} m/s, w={cmd_w:+.2f} rad/s) | "
+                    f"trigger={int(tr_btn)}({tr_val:.2f}) "
+                    f"squeeze={int(sq_btn)}({sq_val:.2f}) "
+                    f"X={int(x_btn)} Y={int(y_btn)}"
+                )
+                rt._last_left_print_t = now
+            # ---------------------------------------------------------------------------
+
+
             # 그리퍼
             g = step_gripper(rt.gripper_ctl, rt.teleoperator)   
             
@@ -292,18 +350,14 @@ def run_loop(args, rt: RuntimeContext):
             ############### IK step #####################
             if rt.mode != "AT_ZERO":
                 try:
-                    dt = rt.rate.dt
-                    def _smooth_vel(vel, vel_filt, dt):
-                        # 여기서 vel_params를 닫아둠
-                        from .control.smoothing import smooth_vel
-                        return smooth_vel(vel, vel_filt, dt, vel_params)
+                    dt = float(rt.rate.dt)
 
-                    rt.last_q, rt.vel_filt = ik_step(
+                    rt.last_q = ik_step(
                         rt.model, rt.data, rt.configuration,
                         rt.tasks, rt.limits, rt.solver, dt,
                         rt.last_q, target_T,
                         g.joint7, g.joint8, rt.q_idx7, rt.q_idx8,
-                        rt.vel_filt, _smooth_vel, debug_qpos_check=True
+                        debug_qpos_check=False
                     )
                 except Exception as e:
                     print("[mink IK] Failed -> keep last_q:", repr(e))
