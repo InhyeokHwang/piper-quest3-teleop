@@ -8,7 +8,7 @@ def ik_step(
     tasks, limits, solver, dt,
     last_q: np.ndarray,
     target_T_use,
-    joint7: float, joint8: float,
+    grip_um: int,
     q_idx7: int, q_idx8: int,
     debug_qpos_check: bool = False,
     dt_min: float = 1e-4,
@@ -29,6 +29,8 @@ def ik_step(
     # MuJoCo 상태 동기화 + forward (FK/Jacobian 갱신) 
     data.qpos[:] = configuration.q
     # gripper도 여기서 같이 넣어두면, FK/Jacobian이 그리퍼 포함 모델일 때 일관성이 좋아짐
+    joint7 = float(grip_um)
+    joint8 = float(grip_um)
     data.qpos[q_idx7] = float(joint7)
     data.qpos[q_idx8] = float(joint8)
     mujoco.mj_forward(model, data)

@@ -1,10 +1,8 @@
 # config.py
-import numpy as np
 from pathlib import Path
 
 # config.py가 있는 폴더 = .../TeleVision/teleop
 _TELEOP_DIR = Path(__file__).resolve().parent
-
 
 UDP_IP = "127.0.0.1"
 UDP_PORT = 15000

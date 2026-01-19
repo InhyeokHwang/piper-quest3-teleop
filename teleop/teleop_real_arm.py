@@ -14,7 +14,7 @@ def main():
     except KeyboardInterrupt:
         print("\n[Main] Interrupted")
     finally:
-        try:
+        try: # not working?
             if rt is not None and (not args.dry_run) and getattr(rt, "driver", None) is not None:
                 move_to_start_pose(
                     driver=rt.driver,

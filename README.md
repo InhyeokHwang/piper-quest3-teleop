@@ -22,14 +22,6 @@ These references significantly informed the kinematic modeling, inverse kinemati
 
 ## Future Work
 
-The following improvements and extensions are planned for future development:
-
-- **Improve MIT Mode stability**  
-  Jitter is observed during teleoperation in MIT Mode. A smoothing and gain-tuning update is planned to address this.
-
-- **Joint control refinement & gain tuning**  
-  PID(Kp/Kd) and input filtering parameters will be iteratively optimized for more stable and compliant motion control.
-
----
+Needs to improve multiprocessing in the loop (loop frequency doesn't match the goal)
 
 **More updates coming soon.**

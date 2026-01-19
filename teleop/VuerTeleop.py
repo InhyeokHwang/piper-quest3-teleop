@@ -12,7 +12,7 @@ from .TeleVision import OpenTeleVision
 from .Preprocessor import VuerPreprocessor
 
 class VuerTeleop:
-    def __init__(self, config_file_path: str):
+    def __init__(self):
         # Vuer/Quest3에서 쓸 이미지 해상도 (H, W)
         self.resolution = (720, 1280)
 
