@@ -10,8 +10,7 @@ from .runtime.init_camera import init_camera
 from .runtime.init_fk_mapper import init_fk_and_start, init_mapper
 from .runtime.init_mink import init_mink
 from .runtime.init_viewer import init_viewer
-from .runtime.init_driver import init_driver
-from .runtime.init_ros2_bridge import init_ros2_bridge
+# from .runtime.init_ros2_bridge import init_ros2_bridge
 from .runtime.init_mujoco import init_T_zero
 from .runtime.init_mujoco import init_mujoco_state_zero
 from .runtime.init_mujoco import init_gripper_indices
@@ -22,8 +21,10 @@ from .utils.joint123_near_zero import joints123_near_zero
 from .utils.runtime_reset import reset_to_zero_like_init
 from .control.ik_stepper import ik_step
 
-from .control.sender import piper_send_jointctrl
+from multiprocessing import Process, Event, Array
+from .runtime.piper_send_process import piper_sender  
 
+from .utils.profiler import LoopProfiler
 
 ## 반환 값은 run_loop로 들어감 -> 실행에 필요한 모든 객체를 초기화
 def build_runtime(args) -> RuntimeContext:
@@ -45,7 +46,8 @@ def build_runtime(args) -> RuntimeContext:
     ))
     right.reset(open_gripper=True)
 
-    vision_rclpy, vision_node = init_ros2_bridge(args.vision60)
+    # vision_rclpy, vision_node = init_ros2_bridge(args.vision60)
+    vision_rclpy, vision_node = None, None
     cam = init_camera(teleoperator, args.camera) # camera
 
     fk, q_zero, EE_START, R_ee0 = init_fk_and_start() # EE_START는 zero pos에 대한 x y z, R_ee0는 zero pos에 대한 rotation mat
@@ -60,7 +62,28 @@ def build_runtime(args) -> RuntimeContext:
     # gripper indices
     q_idx7, q_idx8 = init_gripper_indices(model)
     
-    driver = init_driver()
+    ### shared memory ###
+    # shared cmd: [q1..q6, grip_hw]
+    cmd_shared = Array('d', 7, lock=True)
+    stop_event = Event()
+
+    # 초기값
+    with cmd_shared.get_lock():
+        for i in range(6):
+            cmd_shared[i] = 0.0
+        cmd_shared[6] = 0.0
+
+    send_hz = float(getattr(config, "SEND_RATE_HZ", 100.0))
+    sender_proc = Process(
+        target=piper_sender,
+        args=(args, cmd_shared, stop_event, send_hz),
+        daemon=True,
+    )
+
+    # piper sender process
+    sender_proc.start()
+    if not sender_proc.is_alive():
+        raise RuntimeError("piper_sender process failed to start")
 
     # store driver inside teleoperator or return separately
     rt = RuntimeContext(
@@ -73,7 +96,6 @@ def build_runtime(args) -> RuntimeContext:
         T_zero=T_zero,
         last_q=q_zero.copy(), T_filt=None, vel_filt=None,
         q_idx7=q_idx7, q_idx8=q_idx8,
-        driver=driver,
         startup_sent_zero=False, # 시작할 때 0 쏘기
         sent_joint_zero=False, # returning 이후에 0 쏘기
         hold_target=None,
@@ -82,22 +104,29 @@ def build_runtime(args) -> RuntimeContext:
         vision_node=vision_node,
         left=left,
         right=right,
+        cmd_shared=cmd_shared,
+        stop_event=stop_event,
+        sender_proc=sender_proc
     )
     return rt
 
 
 def run_loop(args, rt: RuntimeContext):
-    send_hz = float(getattr(config, "SEND_RATE_HZ", 100.0))
-    send_period = 1.0 / max(send_hz, 1e-6)
-    next_send = time.monotonic()
-
+    prof = LoopProfiler(report_period=1.0)
     try:
         while True:
+            t_loop0 = time.perf_counter()
+            
+            t = time.perf_counter()
+
             ## viewer가 살아있는지 체크
             if rt.viewer is not None and not rt.viewer.is_running():
                 break
+            prof.add("viewer_alive_check", time.perf_counter() - t)
 
+            
             if not rt.startup_sent_zero:
+                t_startup = time.perf_counter()
                 rt.last_q[:6] = 0.0
 
                 # viewer 상태도 유지
@@ -109,39 +138,56 @@ def run_loop(args, rt: RuntimeContext):
                     rt.data.qvel[vadr] = 0.0
                 mujoco.mj_forward(rt.model, rt.data)
 
-                # 바로 송신 (dry-run이면 출력)
-                next_send = piper_send_jointctrl(
-                    getattr(rt, "driver", None),
-                    args.dry_run,
-                    rt.last_q,
-                    0,  # grip은 지금 값 써도 됨
-                    next_send,
-                    send_period,
-                    config.RAD_TO_PIPER
-                )
+                # sender process 가 보낼 수 있도록 shared cmd에 기록
+                with rt.cmd_shared.get_lock():
+                    for i in range(6):
+                        rt.cmd_shared[i] = float(rt.last_q[i])
+                    rt.cmd_shared[6] = 0.0 
+
 
                 rt.startup_sent_zero = True
+
+                # startup_block은 여기서만!
+                prof.add("startup_block", time.perf_counter() - t_startup)
+
+                t = time.perf_counter()
                 rt.rate.sleep()
-                continue  # 첫 프레임은 IK/모드로직 안 탐
+                prof.add("rate_sleep", time.perf_counter() - t)
 
-            loop_t0 = time.time()
+                # continue 전에 profiling 마무리
+                prof.add("loop_total", time.perf_counter() - t_loop0)
+                prof.tick_loop()
+                if prof.should_report():
+                    prof.report_and_reset()
+                continue
 
+
+            t = time.perf_counter()
             # vr로부터 오른손 컨트롤러 정보 수신
             right_pose_T = rt.teleoperator.step()
+            prof.add("teleop_step", time.perf_counter() - t)
 
+            
 
+            t = time.perf_counter()
             # LEFT Controller -> vision60 command + publish + toggle까지 내부에서 처리
             rt.left.update(
                 rt.teleoperator.left_state,
                 vision_node=rt.vision_node,
                 vision_rclpy=rt.vision_rclpy,
             )
-            
+            prof.add("left_update", time.perf_counter() - t)
+
+
+            t = time.perf_counter()
             # RIGHT Controller
             r = rt.right.update(rt.teleoperator)
-            grip_um = r.grip_out
+            prof.add("right_update", time.perf_counter() - t)
+
+            grip_hw = r.grip_out
             squeeze_holding = r.holding
             squeeze_just_pressed = r.just_pressed
+            
 
             ##################### 네 종류 MODE ######################
             ## RETURNING - zero position으로 돌아가는 상태
@@ -149,9 +195,13 @@ def run_loop(args, rt: RuntimeContext):
             ## HOLD - 자세 유지
             ## TELEOP - squeeze 버튼을 누르고 있는 상태 (TELEOP중인 상태)
 
+
+            t = time.perf_counter()
             # 현재 로봇 EE pose 얻기
             T_cur = rt.fk.compute_fk(rt.last_q)
+            prof.add("fk_compute", time.perf_counter() - t)
 
+            t = time.perf_counter()
             if rt.mode == "RETURNING":
                 if joints123_near_zero(rt.last_q, tol_deg=5.0):
                     rt.mode = "AT_ZERO"
@@ -166,20 +216,28 @@ def run_loop(args, rt: RuntimeContext):
             elif rt.mode == "AT_ZERO":
                 target_T = rt.T_zero
 
-                # squeeze 누름
                 if squeeze_just_pressed:
-                    # quest 쪽 스켈레톤 anchor는 지금 컨트롤러 위치로 리셋
                     controller_anchor = rt.teleoperator.tv.right_controller[:3, 3].copy()
                     rt.teleoperator.tv.enable_skeleton(controller_anchor)
 
                     q_zero6 = np.zeros(6, dtype=float)
                     reset_to_zero_like_init(rt, q_zero6)
 
-                    # neutral 잡기
                     rt.mapper.set_neutral(rt.T_zero, right_pose_T)
 
                     rt.mode = "TELEOP"
+
+                    # 이 프레임에서 mode_logic도 끝났으니 기록하고 빠지기
+                    prof.add("mode_logic", time.perf_counter() - t)
+
+                    t_sleep = time.perf_counter()
                     rt.rate.sleep()
+                    prof.add("rate_sleep", time.perf_counter() - t_sleep)
+
+                    prof.add("loop_total", time.perf_counter() - t_loop0)
+                    prof.tick_loop()
+                    if prof.should_report():
+                        prof.report_and_reset()
                     continue
 
             elif rt.mode == "HOLD":
@@ -194,7 +252,18 @@ def run_loop(args, rt: RuntimeContext):
                     rt.T_filt = None
                     rt.vel_filt = None
                     rt.mode = "TELEOP"
+
+                    prof.add("mode_logic", time.perf_counter() - t)
+                    t = time.perf_counter()
+                    
                     rt.rate.sleep()
+                    prof.add("rate_sleep", time.perf_counter() - t)
+
+                    prof.add("loop_total", time.perf_counter() - t_loop0)
+                    
+                    prof.tick_loop()
+                    if prof.should_report():
+                        prof.report_and_reset()
                     continue
 
                 # RETURN 버튼 눌렀을 때만 복귀
@@ -217,10 +286,11 @@ def run_loop(args, rt: RuntimeContext):
                     rt.T_filt = None
                     rt.vel_filt = None
             ###################################################
-
+            prof.add("mode_logic", time.perf_counter() - t)
             
             ############### IK step #####################
             if rt.mode != "AT_ZERO":
+                t = time.perf_counter()
                 try:
                     dt = float(rt.rate.dt)
 
@@ -228,43 +298,54 @@ def run_loop(args, rt: RuntimeContext):
                         rt.model, rt.data, rt.configuration,
                         rt.tasks, rt.limits, rt.solver, dt,
                         rt.last_q, target_T,
-                        grip_um, rt.q_idx7, rt.q_idx8,
+                        grip_hw, rt.q_idx7, rt.q_idx8,
                         debug_qpos_check=False
                     )
                 except Exception as e:
                     print("[mink IK] Failed -> keep last_q:", repr(e))
+                prof.add("ik_step", time.perf_counter() - t)
             ##############################################
 
 
             ############ skeleton render #################
             if rt.mode == "TELEOP":
+                t = time.perf_counter()
                 joints_xyz = rt.fk.fk_all_joint_positions(rt.last_q)
                 rt.teleoperator.tv.set_robot_joints(joints_xyz)
+                prof.add("skeleton_render", time.perf_counter() - t)
             ##############################################
 
             ############## send to robot ##################
-            next_send = piper_send_jointctrl(
-                getattr(rt, "driver", None),
-                args.dry_run,
-                rt.last_q,
-                grip_um,
-                next_send,
-                send_period,
-                config.RAD_TO_PIPER
-            )
+            # sender 프로세스가 읽을 최신 명령 기록
+            t = time.perf_counter()
+            with rt.cmd_shared.get_lock():
+                for i in range(6):
+                    rt.cmd_shared[i] = float(rt.last_q[i])
+                rt.cmd_shared[6] = float(grip_hw)
+            prof.add("cmd_write_lock", time.perf_counter() - t)
 
             # 카메라
             if rt.cam is not None:
+                t = time.perf_counter()
                 rt.cam.step()
-
-            if args.print_freq:
-                dtp = max(time.time() - loop_t0, 1e-9)
-                print("[Loop] freq:", 1.0 / dtp)
+                prof.add("camera_step", time.perf_counter() - t)
 
             if rt.viewer is not None:
+                t = time.perf_counter()
                 rt.viewer.sync()
+                prof.add("viewer_sync", time.perf_counter() - t)
 
+            t = time.perf_counter()
             rt.rate.sleep()
+            prof.add("rate_sleep", time.perf_counter() - t)
+
+            prof.add("loop_total", time.perf_counter() - t_loop0)
+            prof.tick_loop()
+
+            if prof.should_report():
+                prof.report_and_reset()
+
+
 
     except KeyboardInterrupt:
         pass

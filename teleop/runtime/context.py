@@ -48,8 +48,9 @@ class RuntimeContext:
     vision_rclpy: Optional[Any]
     vision_node: Optional[Any]
 
-    # default fields (must be last) 
-    driver: Optional[Any] = None
+    cmd_shared: Optional[Any] = None   # multiprocessing.Array('d', 7, lock=True)
+    stop_event: Optional[Any] = None   # multiprocessing.Event()
+    sender_proc: Optional[Any] = None  # multiprocessing.Process
 
     startup_sent_zero: bool = False
     sent_joint_zero: bool = False
@@ -63,6 +64,21 @@ class RuntimeContext:
         if self._closed:
             return
         self._closed = True
+
+        # --- Stop sender process first ---
+        try:
+            if self.stop_event is not None:
+                self.stop_event.set()
+            if self.sender_proc is not None:
+                self.sender_proc.join(timeout=2.0)
+                if self.sender_proc.is_alive():
+                    self.sender_proc.terminate()
+                    self.sender_proc.join(timeout=1.0)
+        except Exception:
+            pass
+        self.sender_proc = None
+        self.stop_event = None
+        self.cmd_shared = None
 
         # Viewer
         v = self.viewer
@@ -92,16 +108,3 @@ class RuntimeContext:
                     t.close()
             except Exception:
                 pass
-
-        # Driver
-        d = self.driver
-        if d is not None:
-            for fn in ("disconnect", "close"):
-                f = getattr(d, fn, None)
-                if callable(f):
-                    try:
-                        f()
-                    except Exception:
-                        pass
-                    break
-            self.driver = None

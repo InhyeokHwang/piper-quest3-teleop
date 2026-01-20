@@ -134,8 +134,10 @@ class RightController:
               - on squeeze just_pressed: capture references
               - while holding: compute target_T by applying relative delta
         """
-        rs = getattr(teleoperator, "right_state", None) or []
-
+        rs = getattr(teleoperator, "right_state", None)
+        if rs is None:
+            rs = []
+            
         # -----------------
         # squeeze edge/hold
         # -----------------

@@ -51,7 +51,7 @@ class PiperDriver:
         ctrl_mode: int = 0x01,
         move_mode: int = 0x04,
         speed: int = 50,
-        is_mit_mode: int = 0xAD,
+        is_mit_mode: int = 0x00,
         residence_time: int = 0,
         installation_pos: int = 0x00,
     ):

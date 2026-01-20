@@ -7,7 +7,7 @@ def init_T_zero(EE_START, R_ee0):
     return T_zero
 
 def init_mujoco_state_zero(model, data): 
-    for k in range(6):
+    for k in range(8):
         j = model.joint(f"joint{k+1}")
         adr = int(np.asarray(j.qposadr).item())
         data.qpos[adr] = 0.0

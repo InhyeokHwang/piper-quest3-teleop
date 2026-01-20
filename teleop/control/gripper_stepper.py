@@ -6,7 +6,7 @@ from .. import config
 class GripperOutputs:
     joint7: float
     joint8: float
-    grip_um: int
+    grip_hw: int
     open_ratio: float
     gripper_pos: int
 
@@ -17,6 +17,6 @@ def step_gripper(gripper_ctl, teleoperator) -> GripperOutputs:
 
     joint7 =  config.SIM_GRIPPER_RANGE * open_ratio
     joint8 = -config.SIM_GRIPPER_RANGE * open_ratio
-    grip_um = int(round(config.GRIPPER_MAX_UM * open_ratio))
+    grip_hw = int(round(config.GRIPPER_MAX_UM * open_ratio))
 
-    return GripperOutputs(joint7, joint8, grip_um, open_ratio, gripper_pos)
+    return GripperOutputs(joint7, joint8, grip_hw, open_ratio, gripper_pos)
