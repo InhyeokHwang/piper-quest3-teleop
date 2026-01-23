@@ -1,6 +1,5 @@
 import time
 from vuer import Vuer
-from vuer.events import ClientEvent
 from vuer.schemas import ImageBackground, DefaultScene
 from vuer.schemas import MotionControllers
 from multiprocessing import Array, Value, Process, shared_memory
@@ -17,7 +16,6 @@ def robot_to_vuer_pos(p_r):
 
 class OpenTeleVision:
     def __init__(self, img_shape, shm_name, stream_mode="image", cert_file="./cert.pem", key_file="./key.pem", ngrok=False):
-
         base_dir = Path(__file__).resolve().parent
         cert_path = (base_dir / cert_file).resolve() if not Path(cert_file).is_absolute() else Path(cert_file)
         key_path  = (base_dir / key_file).resolve()  if not Path(key_file).is_absolute()  else Path(key_file)
@@ -40,8 +38,8 @@ class OpenTeleVision:
 
         # 공유메모리
         if stream_mode == "image": # OpenTeleVision -> 브라우저 
-            existing_shm = shared_memory.SharedMemory(name=shm_name)
-            self.img_array = np.ndarray((self.img_shape[0], self.img_shape[1], 3), dtype=np.uint8, buffer=existing_shm.buf) 
+            self._existing_shm = shared_memory.SharedMemory(name=shm_name)
+            self.img_array = np.ndarray((self.img_shape[0], self.img_shape[1], 3), dtype=np.uint8, buffer=self._existing_shm.buf) 
             self.app.spawn(start=False)(self.main_image) ## vuer 세션마다 실행할 루틴으로 main_image 등록
         else:
             raise ValueError("stream_mode must be 'image'")

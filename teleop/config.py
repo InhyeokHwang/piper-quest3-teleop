@@ -16,7 +16,7 @@ PIPER_MJCF_PATH = str(_TELEOP_DIR / "piper" / "agilex_piper" / "piper.xml")
 MINK_EE_SITE = "attachment_site"  # 네 MJCF에서 end-effector site 이름
 MINK_SOLVER = "daqp"             
 MINK_DT = 0.01                    # IK 적분 dt (config.SLEEP와 맞춰도 됨)
-MINK_LM_DAMPING = 1e-6
+MINK_LM_DAMPING = 1e-4
 MINK_POSTURE_COST = 1e-3
 #######MINK##############
 

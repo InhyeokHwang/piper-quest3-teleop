@@ -9,4 +9,5 @@ def parse_args():
     p.add_argument("--camera", type=int, default=None)
     p.add_argument("--print-freq", action="store_true")
     p.add_argument("--debug-mapper", action="store_true")
+    
     return p.parse_args()

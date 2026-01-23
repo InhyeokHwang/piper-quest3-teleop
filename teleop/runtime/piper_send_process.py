@@ -9,6 +9,10 @@ def piper_sender(args, cmd_shared, stop_event, send_hz: float):
     driver = None
     try:
         driver = init_driver(args)
+        if driver is None:
+            # dry_run이면 init_driver가 None을 반환하도록 해둔 상태라면 여기서 종료
+            return
+        
         send_period = 1.0 / max(float(send_hz), 1e-6)
         next_send = time.monotonic()
 

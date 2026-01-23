@@ -1,8 +1,7 @@
 # vuer_teleop.py
 from __future__ import annotations
 
-from pathlib import Path
-from multiprocessing import Event, Queue, shared_memory
+from multiprocessing import shared_memory
 from typing import Tuple
 
 import numpy as np
@@ -32,7 +31,7 @@ class VuerTeleop:
         )
         self.img_height, self.img_width = self.resolution_cropped[:2]
 
-        # 공유 메모리 생성 (uint8 버퍼)
+        # 공유 메모리 생성 (Quest3 에 띄울 배경 이미지 용도)
         nbytes = int(np.prod(self.img_shape) * np.dtype(np.uint8).itemsize)
         self.shm = shared_memory.SharedMemory(create=True, size=nbytes)
 

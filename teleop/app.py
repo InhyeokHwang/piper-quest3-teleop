@@ -321,7 +321,7 @@ def run_loop(args, rt: RuntimeContext):
             with rt.cmd_shared.get_lock():
                 for i in range(6):
                     rt.cmd_shared[i] = float(rt.last_q[i])
-                rt.cmd_shared[6] = float(grip_hw)
+                rt.cmd_shared[6] = float(grip_hw * 1000.0)
             prof.add("cmd_write_lock", time.perf_counter() - t)
 
             # 카메라
