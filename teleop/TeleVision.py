@@ -145,8 +145,8 @@ class OpenTeleVision:
                     1.0 if ls.get("squeeze", False) else 0.0,        # 1
                     1.0 if ls.get("touchpad", False) else 0.0,       # 2
                     1.0 if ls.get("thumbstick", False) else 0.0,     # 3
-                    1.0 if ls.get("xButton", False) else 0.0,        # 4 
-                    1.0 if ls.get("yButton", False) else 0.0,        # 5
+                    1.0 if ls.get("aButton", False) else 0.0,        # 4 
+                    1.0 if ls.get("bButton", False) else 0.0,        # 5
 
                     float(ls.get("triggerValue", 0.0) or 0.0),       # 6
                     float(ls.get("squeezeValue", 0.0) or 0.0),       # 7
@@ -155,8 +155,8 @@ class OpenTeleVision:
                     float(ts[0] if len(ts) > 0 else 0.0),            # 10
                     float(ts[1] if len(ts) > 1 else 0.0),            # 11
 
-                    1.0 if ls.get("xButtonValue", False) else 0.0,   # 12
-                    1.0 if ls.get("yButtonValue", False) else 0.0,   # 13
+                    1.0 if ls.get("aButtonValue", False) else 0.0,   # 12
+                    1.0 if ls.get("bButtonValue", False) else 0.0,   # 13
                 ]
 
 
